@@ -1,8 +1,8 @@
 name: GTA clips
 on:
   schedule:
-    - cron: '0 * * * *'
-    - cron: '30 23 * * *'
+    - cron: '15 8,11,14,17,20 * * *'
+      timezone: America/Chicago
     - cron: '17 9 * * *'  # 03:17 CST / 04:17 CDT
   workflow_dispatch:
     inputs:
@@ -100,28 +100,38 @@ jobs:
     outputs:
       detail: ${{ steps.trace.outputs.detail }}
     steps:
-      - name: Space scheduled runs across the day
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check Chicago posting window
         id: slot
         env:
           RULE: ${{ github.event.schedule }}
+          ALLOWED_KICK_CHANNELS: ${{ vars.ALLOWED_KICK_CHANNELS }}
+          ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}
         run: |
           python3 - <<'PYTHON'
-          from datetime import datetime, timezone
-          import os
+          from datetime import datetime, date
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          import json, os
           cap = int(os.environ["DAILY_POST_CAP"])
           if not 1 <= cap <= 25:
               raise SystemExit("DAILY_POST_CAP must be between 1 and 25")
-          hour = datetime.now(timezone.utc).hour
           rule = os.environ["RULE"]
-          hourly = min(cap, 24)
-          due = not rule or (cap == 25 if rule == "30 23 * * *" else hour * hourly % 24 < hourly)
+          now = datetime.now(ZoneInfo("America/Chicago"))
+          due = not rule or (now.date() >= date(2026,11,13) and now.hour in (8,11,14,17,20) and now.minute >= 15)
+          if rule and due:
+              with open(os.environ["GITHUB_ENV"], "a") as env:
+                  print("PREFERRED_CLIP_PLATFORM=" + ("kick" if now.hour in (8,14,20) else "twitch"), file=env)
+                  print(f"POSTING_SLOT={now.date()}:{now.hour:02d}", file=env)
+              if not (os.environ["ALLOWED_KICK_CHANNELS"] or os.environ["ALLOWED_BROADCASTER_IDS"] or json.loads(Path("streamers.json").read_text())["priority_streamers"]):
+                  due = False
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                      print("No post: no streamer has been cleared for automated reposting.", file=summary)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               print("due=" + str(due).lower(), file=f)
           PYTHON
-      - uses: actions/checkout@v4
-        if: steps.slot.outputs.due == 'true'
-        with:
-          persist-credentials: false
       - uses: actions/setup-python@v5
         if: steps.slot.outputs.due == 'true'
         with:

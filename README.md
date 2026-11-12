@@ -1,6 +1,6 @@
 # GTA clip pipeline
 
-The hourly worker selects fast-growing GTA clips, uploads a public YouTube Short, and sends a compilation to the TikTok inbox when the source material and account allow it. Preview mode renders the same edits. Media and Whisper run in a temporary directory on the Ubuntu runner.
+The worker selects fast-growing GTA clips, uploads a public YouTube Short, and sends a compilation to the TikTok inbox when the source material and account allow it. Preview mode renders the same edits. Media and Whisper run in a temporary directory on the Ubuntu runner.
 
 ## Configure the repository
 
@@ -16,7 +16,7 @@ Use **Settings → Secrets and variables → Actions**.
 | Variable `ALLOWED_KICK_CHANNELS` | Comma-separated Kick channel slugs with permission to reuse their footage. Kick-only runs need no Twitch credentials. |
 | Secrets `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` | One Google Desktop OAuth client for the intended channel. The workflow also accepts the same names with the suffix `_1`. |
 | Optional TikTok secrets | The TikTok helper sets `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, and `TIKTOK_ACCESS_TOKEN`. An access token alone works until it expires. |
-| Variable `DAILY_POST_CAP` | Integer 1 through 25. Defaults to 5. Manual deliveries count toward the same UTC day. |
+| Variable `DAILY_POST_CAP` | Integer 1 through 25. Defaults to 5. Manual deliveries count toward the same Chicago calendar day. |
 | Variable `ENABLE_SCHEDULE` | Set to `true` to enable scheduled public YouTube uploads. Manual runs work independently. |
 
 ## Authorize your accounts
@@ -46,7 +46,9 @@ Select **gta5-sample** to render the 26-second freeway ramp Short from the [Unli
 1. Open **Actions → GTA clips → Run workflow → preview**. The one-day artifact contains `youtube.mp4`, source metadata in `batch.json`, and `tiktok.mp4` if two or three clips can supply enough usable footage. Preview leaves delivery counters and reservations untouched.
 2. Review the files, then select **deliver** to process current candidates and request **public visibility on YouTube**. A new run can select different clips from the previous preview. Check the reported visibility in the job log and processing in YouTube Studio.
 3. Open the TikTok inbox notification to edit and publish the compilation. Without TikTok credentials, the compilation is available in the artifact. TikTok may limit pending inbox shares. A failed or delayed transfer remains associated with the batch. Direct Post requires a creator-facing preview, choice of privacy, and explicit consent per video. TikTok excludes private account-management utilities from that integration. [TikTok sharing guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines)
-4. Set `ENABLE_SCHEDULE=true` and your desired `DAILY_POST_CAP`. The schedule runs on the hour, plus 23:30 UTC at cap 25. Lower caps spread eligible render windows across the day. GitHub scheduling delays, shortages of eligible footage, or channel limits can reduce actual deliveries. Google documents a default of 100 video insert calls per day per project. Check the actual quota for your project. [YouTube quotas](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits) · [YouTube upload visibility](https://developers.google.com/youtube/data/reference/rest/v3/videos/insert)
+4. Set `ENABLE_SCHEDULE=true` and your desired `DAILY_POST_CAP`. Starting November 13, 2026, the five daily windows open at 08:15, 11:15, 14:15, 17:15 and 20:15 America/Chicago. The preferred feed alternates Kick/Twitch; either may fill an empty slot with a cleared clip. Late runs outside the window skip delivery. Rendering and platform processing take additional time. With no cleared channels, the run reports a skipped window. Lower caps, insufficient footage and platform limits can reduce deliveries.
+
+Clips need at least 100 source views by default, plus an eligible action or reaction. Up to 12 candidates are screened, with total views and view velocity contributing to the final score. Short-specific captions for YouTube, Instagram and Rumble are saved in `batch.json` for connected publishers or manual handoff. Only YouTube currently supports automatic public delivery here.
 
 ## Selection and editing
 

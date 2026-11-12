@@ -12,6 +12,7 @@ import subprocess
 import shutil
 import tempfile
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
 from render import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
@@ -35,7 +36,7 @@ def daily_cap():
 
 
 def day_key():
-    return "gta-clips:daily:" + datetime.now(timezone.utc).date().isoformat()
+    return "gta-clips:daily:" + datetime.now(ZoneInfo("America/Chicago")).date().isoformat()
 
 
 def ranked(clips, used, now):
@@ -377,6 +378,17 @@ def prepare(root):
     eligible, short, group = [], None, []
     probe_limit = min(20, max(1, int(config.get("candidate_probe_limit", 6))))
     minimum_moment_score = int(config.get("minimum_moment_score", 0))
+    preferred = os.getenv("PREFERRED_CLIP_PLATFORM")
+    candidates = [c for c in candidates if c.get("view_count", 0) >= config.get("minimum_source_views", 0)]
+    # Give both feeds screening slots even when one dominates the velocity chart.
+    if preferred:
+        a = [c for c in candidates if c.get("platform", "twitch") == preferred]
+        b = [c for c in candidates if c.get("platform", "twitch") != preferred]
+        candidates = [row[i] for i in range(max(len(a), len(b))) for row in (a,b) if i < len(row)]
+    def priority(c):
+        traction = math.log1p(c.get("view_count", 0)) + math.log1p(c.get("velocity", 0))
+        return (preferred is not None and c.get("platform", "twitch") == preferred,
+                traction + min(c["moment_score"], 10) * .5)
     for c in candidates[:probe_limit]:
         try:
             accepted = load(c)
@@ -391,8 +403,7 @@ def prepare(root):
         eligible.append(c)
         # Discovery is ordered by view velocity. Within that ranking, favor a concrete
         # event, then a spoken reaction rather than generic gameplay.
-        if short is None or (c["moment_score"], len(c["hype_hits"])) > (
-                short["moment_score"], len(short["hype_hits"])):
+        if short is None or priority(c) > priority(short):
             short = c
         group = compilation(eligible, speech)
     if short is None:
@@ -413,6 +424,8 @@ def prepare(root):
     if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
         raise RuntimeError("Rendered Short must be at least 18 and under 44 seconds")
     short["music_credit"] = music_mix(short_file, preserve_audio=True)
+    short["social_captions"] = {dest: delivery.social_caption(short, game, dest)
+                                for dest in ("instagram", "rumble", "youtube")}
     short_file.replace(root / "youtube.mp4")
     if group:
         parts = []
@@ -443,7 +456,11 @@ def prepare(root):
 def reserve(db, ids, batch, *, second_post_ids=()):
     # Redis retries WATCH conflicts before any platform call. An ambiguous upload keeps its slot.
     key, cap = day_key(), daily_cap()
+    slot = os.getenv("POSTING_SLOT")
+    slot_key = "gta-clips:slot:" + slot if slot else None
     def transaction(p):
+        if slot_key and p.get(slot_key):
+            return 0
         available = cap - int(p.get(key) or 0)
         slots = 2 if second_post_ids and available >= 2 else 1
         chosen = sorted(set(ids).union(second_post_ids if slots == 2 else ()))
@@ -452,11 +469,13 @@ def reserve(db, ids, batch, *, second_post_ids=()):
         if available <= 0:
             return 0
         p.multi()
+        if slot_key:
+            p.set(slot_key, batch, ex=172800)
         p.incrby(key, slots)
         p.expire(key, 172800)
         p.hset(LEDGER, mapping={i: "pending:" + batch for i in chosen})
         return slots
-    return db.transaction(transaction, LEDGER, key, value_from_callable=True)
+    return db.transaction(transaction, LEDGER, key, *([slot_key] if slot_key else []), value_from_callable=True)
 
 
 def publish(root):

@@ -4,7 +4,26 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
+
+
+def social_tags(clip, game, dest):
+    title = clip["title"].lower()
+    tags = ["GTA6" if game.endswith(" VI") else "GTA5"]
+    for pattern, tag in [(r"\b(rp|roleplay|nopixel)\b", "GTARP"), (r"\b(cops?|chase|police)\b", "PoliceChase"),
+                         (r"\b(stunt|jump|ramp)\b", "GTAStunts"), (r"\bheist\b", "GTAHeist"),
+                         (r"\bvice city\b", "ViceCity")]:
+        if re.search(pattern, title):
+            tags.append(tag)
+    tags.append({"instagram":"GamingReels","youtube":"Shorts","tiktok":"GamingTikTok","rumble":"Gaming"}[dest])
+    tags.extend(s.lstrip("#") for s in clip.get("campaign", {}).get("extra_tags", []) if isinstance(s,str) and re.fullmatch(r"#?\w{1,40}", s))
+    return list(dict.fromkeys(tags))
+
+
+def social_caption(clip, game, dest):
+    credit = clip.get("broadcaster_login") or clip.get("broadcaster_name", "")
+    return f'{clip["title"]}\nClip: {credit}\n' + " ".join("#"+tag for tag in social_tags(clip, game, dest))
 
 
 def youtube(path, clip, game, *, with_receipt=False):
@@ -16,9 +35,7 @@ def youtube(path, clip, game, *, with_receipt=False):
                         client_id=os.environ["YOUTUBE_CLIENT_ID"],
                         client_secret=os.environ["YOUTUBE_CLIENT_SECRET"])
     client = build("youtube", "v3", credentials=creds, cache_discovery=False)
-    tags = (["GTA6", "GTAVI"] if game.endswith(" VI") else ["GTA5", "GTAV"]) + ["Gaming", "Shorts"]
-    tags += [t.lstrip("#") for t in clip.get("campaign", {}).get("extra_tags", []) if t.lstrip("#")]
-    tags = list(dict.fromkeys(tags))
+    tags = social_tags(clip, game, "youtube")
     title = (clip["title"] or game).replace("<", "").replace(">", "").strip()[:80] or game
     body = {"snippet": {"title": title + " #Shorts", "categoryId": "20", "tags": tags,
                         "description": f'{game}\nCredit: {clip["broadcaster_name"]}\n{clip["url"]}\n'

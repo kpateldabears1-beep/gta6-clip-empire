@@ -119,7 +119,7 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_only_speech_rich_nonmusical_cuts_are_rendered(self):
         clip = {"id": "kick:clip_abc", "platform": "kick", "broadcaster_id": "kick:lacy",
-                "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {"campaign_watermark": "CODE1"}, "duration": 30}
+                "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {"campaign_watermark": "CODE1"}, "duration": 30, "view_count": 350}
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root = Path(tmp)
             stack.enter_context(patch.object(main, "music_mix", return_value="test track"))
@@ -142,7 +142,7 @@ class DiscoveryTests(unittest.TestCase):
             flagged = dict(clip, id="kick:clip_music")
             second = dict(clip, id="kick:clip_two", broadcaster_id="kick:n3on", duration=34,
                           campaign={"campaign_watermark": "CODE2"})
-            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [dict(clip, id="kick:silent"), dict(clip, id="kick:sparse"), flagged, clip, second])))
+            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [dict(clip, id="kick:unpopular", view_count=1), dict(clip, id="kick:silent"), dict(clip, id="kick:sparse"), flagged, clip, second])))
             stack.enter_context(patch.object(main, "decode_audio", return_value=[0]))
             stack.enter_context(patch.object(main, "audio_activity", return_value=(0, True)))
             screen = stack.enter_context(patch.object(main, "MusicScreen"))
@@ -164,6 +164,11 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(render.call_args.kwargs["platform"], "Kick")
             self.assertEqual([call.args[5] for call in render.call_args_list], ["lacy", "lacy", "n3on"])
             self.assertEqual(len(render.call_args_list[0].args[3]), 4)
+            dl.extract_info.assert_called()
+            self.assertFalse(any("unpopular" in str(c) for c in dl.extract_info.call_args_list))
+            caption = json.loads((root / "batch.json").read_text())["short"]["social_captions"]["instagram"]
+            self.assertIn("#GTAStunts", caption)
+            self.assertNotIn("#GTA6", caption)
             self.assertEqual(json.loads((root / "batch.json").read_text())["short"]["id"], "kick:clip_abc")
 
     def test_invalid_delivery_batch_fails_before_reserving(self):
