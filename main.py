@@ -369,10 +369,12 @@ def prepare(root):
         if not accepted:
             continue
         eligible.append(c)
-        if short is None:
+        # Discovery is already ordered by view velocity. Prefer a spoken reaction
+        # among the same candidates and use that original ordering to break ties.
+        if short is None or len(c["hype_hits"]) > len(short["hype_hits"]):
             short = c
         group = compilation(eligible, speech)
-        if short and group:
+        if group and short["hype_hits"]:
             break
     if short is None:
         print("No eligible source passed the duration and speech checks.")
@@ -391,7 +393,7 @@ def prepare(root):
     cut(short, short_file.name, short["duration"])
     if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
         raise RuntimeError("Rendered Short must be at least 18 and under 44 seconds")
-    short["music_credit"] = music_mix(short_file)
+    short["music_credit"] = music_mix(short_file, preserve_audio=True)
     short_file.replace(root / "youtube.mp4")
     if group:
         parts = []
@@ -403,7 +405,7 @@ def prepare(root):
         join(parts, compilation_file)
         if not 62 < seconds(compilation_file) < 66:
             raise RuntimeError("Rendered compilation outside target length")
-        music_credit = music_mix(compilation_file)
+        music_credit = music_mix(compilation_file, preserve_audio=True)
         for clip in group:
             clip["compilation_music_credit"] = music_credit
         compilation_file.replace(root / "tiktok.mp4")

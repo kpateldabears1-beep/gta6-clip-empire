@@ -1,4 +1,4 @@
-"""Music-only mixes from a pinned collection of CC0 recordings."""
+"""Music mixes from a pinned collection of CC0 recordings."""
 import json
 from pathlib import Path
 import random
@@ -19,7 +19,7 @@ TRACKS = [
 ]
 
 
-def music_mix(video, track=None):
+def music_mix(video, track=None, *, preserve_audio=False):
     title, artist, slug, filename, sha = track or random.choice(TRACKS)
     with tempfile.TemporaryDirectory(dir=video.parent) as folder:
         music, output = Path(folder)/"track.ogg", Path(folder)/"mixed.mp4"
@@ -30,10 +30,18 @@ def music_mix(video, track=None):
         video_stream = next(s for s in probe(video)["streams"] if s["codec_type"] == "video")
         duration = float(video_stream["duration"])
         # Loop short tracks seamlessly. Trim before loudnorm to measure the actual excerpt.
-        fx = (f"atrim=duration={duration},asetpts=PTS-STARTPTS,loudnorm=I=-16:TP=-2:LRA=9,"
-              f"afade=t=in:d=0.06,afade=t=out:st={max(0,duration-.45):.3f}:d=0.45")
+        bed = (f"[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+               f"afade=t=in:d=0.06,afade=t=out:st={max(0,duration-.45):.3f}:d=0.45")
+        if preserve_audio:
+            # Keep the live reaction in front and turn the instrumental down during speech.
+            fx = (bed + ",volume=0.20[bed];[0:a]asplit[voice][key];"
+                  "[bed][key]sidechaincompress=threshold=0.025:ratio=6:attack=15:release=240[ducked];"
+                  "[voice][ducked]amix=inputs=2:duration=first:normalize=0,")
+        else:
+            fx = bed + ","
+        fx += "loudnorm=I=-16:TP=-2:LRA=9[mix]"
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(video), "-stream_loop", "-1", "-ss", "4",
-                        "-i", str(music), "-map", "0:v:0", "-map", "1:a:0", "-af", fx, "-t", str(duration),
+                        "-i", str(music), "-filter_complex", fx, "-map", "0:v:0", "-map", "[mix]", "-t", str(duration),
                         "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "160k",
                         "-movflags", "+faststart", str(output)], check=True, timeout=150)
         audio = next(s for s in probe(output)["streams"] if s["codec_type"] == "audio")
