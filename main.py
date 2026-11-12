@@ -257,6 +257,16 @@ def queued(db, channels, config):
     return game, ranked(candidates, {c["id"] for (_, c), taken in zip(rows, used) if taken}, now)
 
 
+def download_clip(url, root, base):
+    from yt_dlp import YoutubeDL
+    with YoutubeDL({"quiet": True, "noplaylist": True, "cachedir": False, "socket_timeout": 30,
+                    "format": "best[ext=mp4]/best", "outtmpl": str(root / (base+".%(ext)s"))}) as ydl:
+        info = ydl.extract_info(url, download=True)
+        if not isinstance(info, dict):
+            return None
+        return Path(ydl.prepare_filename(info))
+
+
 def prepare(root):
     channels, config = sources_config()
     db = store()
@@ -270,7 +280,6 @@ def prepare(root):
     if not candidates:
         print("No eligible unused GTA footage in the configured lookback.")
         return
-    from yt_dlp import YoutubeDL
     from yt_dlp.utils import DownloadError
     from faster_whisper import WhisperModel
     model, screen, sources, speech = None, None, {}, {}
@@ -291,12 +300,9 @@ def prepare(root):
         else:
             url = "https://clips.twitch.tv/" + slug
         base = f"src{len(sources)}"
-        with YoutubeDL({"quiet": True, "noplaylist": True, "cachedir": False, "socket_timeout": 30,
-                        "format": "best[ext=mp4]/best", "outtmpl": str(root / (base+".%(ext)s"))}) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if not isinstance(info, dict):
-                return False
-            src = Path(ydl.prepare_filename(info))
+        src = download_clip(url, root, base)
+        if src is None:
+            return False
         sources[c["id"]] = src
         metadata = probe(src)
         video = next((s for s in metadata["streams"] if s["codec_type"] == "video"), None)

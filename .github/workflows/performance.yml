@@ -1,6 +1,15 @@
 name: Channel performance and GTA discovery
 on:
   workflow_dispatch:
+    inputs:
+      check_media:
+        description: Pull and decode samples from public streamer clips
+        type: boolean
+        default: false
+      twitch_sample:
+        description: Optional public Twitch clip ID for a playback test
+        type: string
+        required: false
   schedule:
     - cron: '13 */3 * * *'
 
@@ -14,7 +23,7 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: ${{ inputs.check_media && 10 || 4 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +37,16 @@ jobs:
           REDIS_URL: ${{ secrets.REDIS_URL }}
           YOUTUBE_CHANNEL_ID: ${{ vars.YOUTUBE_CHANNEL_ID }}
         run: python cloud_report.py
+      - name: Pull and decode streamer clip samples
+        if: inputs.check_media && !cancelled()
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          TWITCH_SAMPLE: ${{ inputs.twitch_sample }}
+        run: |
+          if ! command -v ffmpeg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y ffmpeg; fi
+          python -m pip install -q 'yt-dlp>=2025.10.14' requests
+          python -u scripts/check_streamer_clips.py
       - name: Notify on a scheduled failure
         if: failure() && github.event_name == 'schedule'
         env:
