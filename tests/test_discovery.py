@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import json
+import os
+import sys
 import tempfile
+from contextlib import ExitStack
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -46,6 +51,43 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn("Exactly", data)
             self.assertNotIn("bad", data)
             subtitles(path, None, 3, "What happens next?", "Streamer")
+
+    def test_silent_kick_clip_reaches_the_renderer(self):
+        clip = {"id": "kick:clip_abc", "platform": "kick", "broadcaster_id": "kick:lacy",
+                "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {}, "duration": 30}
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            root = Path(tmp)
+            dl = Mock()
+            dl.prepare_filename.return_value = str(root / "src0.mp4")
+            dl.extract_info.return_value = {"id": "clip_abc"}
+            downloader = unittest.mock.MagicMock()
+            downloader.return_value.__enter__.return_value = dl
+            whisper = Mock(side_effect=AssertionError("silent clips do not need Whisper"))
+            stack.enter_context(patch.dict(sys.modules, {
+                "yt_dlp": SimpleNamespace(YoutubeDL=downloader),
+                "yt_dlp.utils": SimpleNamespace(DownloadError=OSError),
+                "faster_whisper": SimpleNamespace(WhisperModel=whisper)}))
+            stack.enter_context(patch.dict(os.environ, {"ALLOWED_KICK_CHANNELS": "lacy", "DELIVERY_MODE": "preview"}))
+            stack.enter_context(patch.object(main, "store"))
+            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [clip])))
+            stack.enter_context(patch.object(main, "probe", return_value={
+                "streams": [{"codec_type": "video", "duration": "30"}]}))
+            stack.enter_context(patch.object(main, "seconds", return_value=30))
+            render = stack.enter_context(patch.object(main, "render_vertical_short"))
+            main.prepare(root)
+            dl.extract_info.assert_called_once_with("https://kick.com/lacy/clips/clip_abc", download=True)
+            whisper.assert_not_called()
+            self.assertEqual(render.call_args.args[2:5], (30, [], "Ramp jump"))
+            self.assertEqual(json.loads((root / "batch.json").read_text())["short"]["id"], "kick:clip_abc")
+
+    def test_invalid_delivery_batch_fails_before_reserving(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(main, "store") as store:
+            root = Path(tmp)
+            for group in (None, {}, "invalid", [None]):
+                (root / "batch.json").write_text(json.dumps({"game": main.V, "short": {}, "group": group}))
+                with self.assertRaises(ValueError):
+                    main.publish(root)
+            store.assert_not_called()
 
     def test_hooks_are_short_and_title_specific(self):
         self.assertNotEqual(curiosity_hook("Police chase"), curiosity_hook("A huge jump"))

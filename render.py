@@ -109,9 +109,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def render_vertical_short(source, out, length, words, title, credit, notes=(), facecam=None, start=0):
+def render_vertical_short(source, out, length, words, title, credit, notes=(), facecam=None, start=0, hook=None):
     ass = out.with_suffix(".ass")
-    subtitles(ass, words, length, title, credit, notes)
+    subtitles(ass, words, length, hook or curiosity_hook(title), credit, notes)
     audio = any(s["codec_type"] == "audio" for s in probe(source)["streams"])
     # Brief center punch-in on each cut, then settle back to uncropped gameplay.
     vf = ("[0:v]fps=30,setsar=1,split[back][front];"

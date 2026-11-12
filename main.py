@@ -9,7 +9,7 @@ import re
 import sys
 import tempfile
 
-from render import analyze_audio, join, probe, render_vertical_short, seconds, curiosity_hook, valid_word
+from render import analyze_audio, join, probe, render_vertical_short, seconds, valid_word
 import delivery
 from kick import fetch_kick_clips, timestamp, kick_media_url
 
@@ -306,8 +306,8 @@ def prepare(root):
         credit = c["broadcaster_name"]
         if youtube and c["campaign"].get("campaign_watermark"):
             credit += "  |  " + c["campaign"]["campaign_watermark"]
-        render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], edit.get("hook") or curiosity_hook(c["title"]),
-               credit, notes=notes, start=c["trim"],
+        render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], c["title"],
+               credit, notes=notes, start=c["trim"], hook=edit.get("hook"),
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
     cut(short, "youtube.mp4", short["duration"], youtube=True)
     if not 25 <= seconds(root/"youtube.mp4") <= 45:
@@ -346,7 +346,12 @@ def reserve(db, ids, batch):
 
 def publish(root):
     batch = json.loads((root/"batch.json").read_text())
-    short, group = batch["short"], batch["group"]
+    if not isinstance(batch, dict) or batch.get("game") not in (V, VI):
+        raise ValueError("Invalid clip batch or game")
+    short, group = batch.get("short"), batch.get("group")
+    if not isinstance(group, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"] for c in [short, *group]):
+        raise ValueError("Batch needs a rendered Short and a list of compilation clips")
     db = store()
     tag = os.environ.get("GITHUB_RUN_ID", root.name)
     ids = {c["id"] for c in [short, *group]}
