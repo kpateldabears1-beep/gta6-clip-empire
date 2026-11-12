@@ -11,7 +11,8 @@ import subprocess
 import shutil
 import tempfile
 
-from render import analyze_audio, join, probe, render_vertical_short, seconds, valid_word
+from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
+from render import MAX_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
 import delivery
 import cloud_archive
 from monitoring import error_trace, notify_post
@@ -81,8 +82,15 @@ def twitch_clips(channels, config, end):
     game_rows = get("games", name=config["target_game_names"]).get("data")
     games = {g["name"]: g["id"] for g in (game_rows if isinstance(game_rows, list) else [])
              if isinstance(g, dict) and isinstance(g.get("name"), str) and isinstance(g.get("id"), str)}
+    handles = {}
+    ids = list(channels)
+    for i in range(0, len(ids), 100):
+        users = get("users", id=ids[i:i+100]).get("data") or []
+        handles.update((u["id"], u["login"]) for u in users if isinstance(u, dict) and u.get("id") and u.get("login"))
     clips = {}
     for broadcaster in channels:
+        if broadcaster not in handles:
+            continue
         # Query the licensed channels, so smaller streams aren't buried in the global top 100.
         params = dict(broadcaster_id=broadcaster, started_at=(end-timedelta(hours=config["lookback_hours"])).isoformat(),
                       ended_at=end.isoformat(), first=100)
@@ -92,7 +100,7 @@ def twitch_clips(channels, config, end):
             for c in rows if isinstance(rows, list) else ():
                 if (isinstance(c, dict) and isinstance(c.get("id"), str)
                         and c.get("broadcaster_id") == broadcaster and c.get("game_id") in games.values()):
-                    clips[c["id"]] = dict(c, campaign=channels[broadcaster])
+                    clips[c["id"]] = dict(c, campaign=channels[broadcaster], broadcaster_login=handles[broadcaster])
             cursor = page.get("pagination", {}).get("cursor")
             if not cursor:
                 break
@@ -232,15 +240,20 @@ def prepare(root):
     from yt_dlp import YoutubeDL
     from yt_dlp.utils import DownloadError
     from faster_whisper import WhisperModel
-    model, sources, speech = None, {}, {}
+    model, screen, sources, speech = None, None, {}, {}
     def load(c):
-        nonlocal model
+        nonlocal model, screen
         kick = c.get("platform") == "kick"
         slug = c["id"].removeprefix("kick:") if kick else c["id"]
+        # Old queue records may have only the ordinary Twitch display name.
+        handle = c["broadcaster_id"].removeprefix("kick:") if kick else c.get("broadcaster_login") or c.get("broadcaster_name")
+        if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", handle):
+            print(f"Skipped {c['id']}: source handle unavailable.")
+            return False
+        c["broadcaster_login"] = handle
         if not re.fullmatch(r"[A-Za-z0-9_-]+", slug):
             raise ValueError("Invalid source clip slug")
         if kick:
-            handle = c["broadcaster_id"].removeprefix("kick:")
             url = kick_media_url(c.get("media_url"), slug) or f"https://kick.com/{handle}/clips/{slug}"
         else:
             url = "https://clips.twitch.tv/" + slug
@@ -260,25 +273,36 @@ def prepare(root):
                             c["duration"])
         if not any(s["codec_type"] == "audio" for s in metadata["streams"]):
             c["trim"] = 0
-            c["duration"] = min(44.0, c["duration"])
+            c["duration"] = min(MAX_SEGMENT_SECONDS, c["duration"])
             c["hype_hits"] = []
             speech[c["id"]] = []
             return True
-        trim, active = analyze_audio(src, c["duration"])
+        samples = decode_audio(src, min(c["duration"], MAX_SEGMENT_SECONDS + 1.5))
+        trim, active = audio_activity(samples)
         if not active:
             return False
         c["trim"] = trim
-        c["duration"] = min(44.0, c["duration"] - trim)
+        c["duration"] = min(MAX_SEGMENT_SECONDS, c["duration"] - trim)
         if model is None:
             model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
                                  download_root=str(root / "model"))
-        segments, _ = model.transcribe(str(src), word_timestamps=True, beam_size=1, vad_filter=True)
-        words = []
+        start_sample = round(trim * RATE)
+        samples = samples[start_sample:start_sample + round(c["duration"] * RATE)]
+        segments, _ = model.transcribe(samples, word_timestamps=True, beam_size=1, vad_filter=True)
+        words, cues = [], []
         for segment in segments:
+            if MUSIC_CUE.search(segment.text):
+                cues.append((segment.start, segment.end))
             for word in getattr(segment, "words", None) or ():
                 start, end, text = (getattr(word, key, None) for key in ("start", "end", "word"))
-                if valid_word((start, end, text)) and end > trim:
-                    words.append((max(0, start - trim), end - trim, text.strip()))
+                if valid_word((start, end, text)) and start < c["duration"] and end > 0:
+                    words.append((max(0, start), min(end, c["duration"]), text.strip()))
+        if screen is None:
+            screen = MusicScreen()
+        flagged = screen.flagged_span(samples, words, cues)
+        if flagged:
+            print(f"Skipped {c['id']}: likely music with vocals and no commentary at {flagged[0]+trim:.1f}–{flagged[1]+trim:.1f}s.")
+            return False
         speech[c["id"]] = words
         transcript = " ".join(w.casefold() for start, end, w in words if start < c["duration"])
         c["hype_hits"] = [kw for kw in config["hype_keywords"] if kw.casefold() in transcript]
@@ -307,16 +331,15 @@ def prepare(root):
         edit = editorial["clips"].get(c["id"], {})
         notes = [{**n, "start": n["start"] - c["trim"], "end": n["end"] - c["trim"]}
                  for n in edit.get("notes", [])]
-        credit = c["broadcaster_name"]
-        if youtube and c["campaign"].get("campaign_watermark"):
-            credit += "  |  " + c["campaign"]["campaign_watermark"]
+        platform = "Kick" if c.get("platform") == "kick" else "Twitch"
         render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], c["title"],
-               credit, notes=notes, start=c["trim"], hook=edit.get("hook"),
+               c["broadcaster_login"], platform=platform, campaign=c["campaign"].get("campaign_watermark") if youtube else None,
+               notes=notes, start=c["trim"], hook=edit.get("hook"),
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
     short_file = root / "youtube-rendering.mp4"
     cut(short, short_file.name, short["duration"], youtube=True)
-    if not 25 <= seconds(short_file) <= 45:
-        raise RuntimeError("Rendered Short outside 25–45 second target")
+    if not 25 <= seconds(short_file) < 44:
+        raise RuntimeError("Rendered Short must be at least 25 and under 44 seconds")
     short_file.replace(root / "youtube.mp4")
     if group:
         parts = []

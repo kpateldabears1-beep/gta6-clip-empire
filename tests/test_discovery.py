@@ -78,6 +78,8 @@ class DiscoveryTests(unittest.TestCase):
             main.prepare(root)
             dl.extract_info.assert_called_once_with("https://kick.com/lacy/clips/clip_abc", download=True)
             whisper.assert_not_called()
+            self.assertEqual(render.call_args.kwargs["platform"], "Kick")
+            self.assertEqual(render.call_args.args[5], "lacy")
             self.assertEqual(render.call_args.args[2:5], (30, [], "Ramp jump"))
             self.assertEqual(json.loads((root / "batch.json").read_text())["short"]["id"], "kick:clip_abc")
 

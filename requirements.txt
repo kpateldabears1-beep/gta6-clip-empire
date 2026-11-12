@@ -7,3 +7,5 @@ google-auth-oauthlib>=1.2,<2
 google-auth-httplib2>=0.2,<1
 cryptography>=42
 boto3>=1.36,<2
+ai-edge-litert>=2,<3
+numpy>=1.24,<3
