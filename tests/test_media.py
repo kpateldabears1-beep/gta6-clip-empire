@@ -15,7 +15,7 @@ class MediaTests(unittest.TestCase):
             parts = []
             for i, duration in enumerate([33, 32]):
                 source = root / f"source{i}.mp4"
-                cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=blue:s=320x180:r=10"]
+                cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=blue:s=320x180:r=10,drawbox=x=0:y=0:w=96:h=54:color=red:t=fill"]
                 if i == 0:
                     cmd += ["-f", "lavfi", "-i", "sine=frequency=500", "-af", "adelay=2000"]
                 subprocess.run(cmd + ["-t", str(duration), "-c:v", "libx264", str(source)], check=True)
@@ -28,6 +28,12 @@ class MediaTests(unittest.TestCase):
                        notes=[{"start": 0, "end": 3, "text": "Watch the gap"}],
                        facecam=[0, 0, .3, .3] if i else None)
                 self.assertLess(seconds(part), 58)
+                if i:
+                    for y, dominant in [(1148, 2), (1152, 0)]:
+                        rgb = subprocess.check_output([
+                            "ffmpeg", "-v", "error", "-ss", "2", "-i", str(part), "-vf",
+                            f"crop=2:2:100:{y},scale=1:1,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-"])
+                        self.assertGreater(rgb[dominant], 180, (y, rgb))
                 parts.append(part)
             joined = root / "tiktok.mp4"
             join(parts, joined)
@@ -37,4 +43,6 @@ class MediaTests(unittest.TestCase):
             self.assertEqual((v["width"], v["height"], v["codec_name"]), (1080, 1920, "h264"))
             self.assertTrue(any(s["codec_name"] == "aac" and s["sample_rate"] == "44100"
                                 for s in streams))
+            durations = [float(s["duration"]) for s in streams if s["codec_type"] in ("audio", "video")]
+            self.assertLess(max(durations) - min(durations), 0.08)
             subprocess.run(["ffmpeg","-v","error","-xerror","-i",str(joined),"-f","null","-"], check=True)

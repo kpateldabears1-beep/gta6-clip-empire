@@ -2,14 +2,16 @@
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
 import sys
 import tempfile
 
-from render import analyze_audio, join, probe, render, seconds
+from render import analyze_audio, join, probe, render_vertical_short, seconds, curiosity_hook, valid_word
 import delivery
+from kick import fetch_kick_clips, timestamp, kick_media_url
 
 VI, V = "Grand Theft Auto VI", "Grand Theft Auto V"
 LEDGER = "gta-clips:v1"
@@ -31,25 +33,35 @@ def ranked(clips, used, now):
     scored = []
     generic = {"untitled", "clip", "gta", "gta v", "gta vi", "gta 5", "gta 6", "grand theft auto"}
     for c in clips:
-        title = " ".join(c["title"].strip().casefold().split())
-        if c["id"] in used or len(title) < 4 or title in generic or c["duration"] < 18:
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str) or not isinstance(c.get("title"), str):
             continue
-        created = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
-        age = max(1, (now - created).total_seconds() / 60)
-        scored.append(dict(c, velocity=c["view_count"] / age))
+        title = " ".join(c["title"].strip().casefold().split())
+        created = timestamp(c.get("created_at"))
+        try:
+            duration, views = float(c.get("duration")), int(c.get("view_count"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if (not created or not math.isfinite(duration) or duration < 18 or views < 0
+                or c["id"] in used or len(title) < 4 or title in generic):
+            continue
+        minutes = (now - created).total_seconds() / 60
+        if minutes < 0:
+            continue
+        age = (minutes or 1 / 60) if c.get("platform") == "kick" else max(1, minutes)
+        scored.append(dict(c, velocity=views / age, duration=duration, view_count=views))
     return sorted(scored, key=lambda c: (-c["velocity"], -c["view_count"], c["id"]))[:50]
 
 
 def select(games, clips, used, now=None):
     now = now or datetime.now(timezone.utc)
-    vi = ranked([c for c in clips if c["game_id"] == games.get(VI)], used, now)
+    vi = ranked([c for c in clips if isinstance(c, dict) and c.get("game_id") in (VI, games.get(VI, VI))], used, now)
     if len(vi) >= 5:
         return VI, vi
-    v = ranked([c for c in clips if c["game_id"] == games.get(V)], used, now)
+    v = ranked([c for c in clips if isinstance(c, dict) and c.get("game_id") in (V, games.get(V, V))], used, now)
     return (V, v) if v else (VI, vi)
 
 
-def discover(db, channels, config):
+def twitch_clips(channels, config, end):
     import requests
     r = requests.post("https://id.twitch.tv/oauth2/token", data={
         "client_id": os.environ["TWITCH_CLIENT_ID"], "client_secret": os.environ["TWITCH_CLIENT_SECRET"],
@@ -62,8 +74,9 @@ def discover(db, channels, config):
                             headers=headers, timeout=25)
         resp.raise_for_status()
         return resp.json()
-    games = {g["name"]: g["id"] for g in get("games", name=config["target_game_names"])["data"]}
-    end = datetime.now(timezone.utc)
+    game_rows = get("games", name=config["target_game_names"]).get("data")
+    games = {g["name"]: g["id"] for g in (game_rows if isinstance(game_rows, list) else [])
+             if isinstance(g, dict) and isinstance(g.get("name"), str) and isinstance(g.get("id"), str)}
     clips = {}
     for broadcaster in channels:
         # Query the licensed channels, so smaller streams aren't buried in the global top 100.
@@ -71,19 +84,36 @@ def discover(db, channels, config):
                       ended_at=end.isoformat(), first=100)
         for _ in range(10):  # Helix limits one query to roughly 1,000 results.
             page = get("clips", **params)
-            for c in page["data"]:
-                if c["broadcaster_id"] == broadcaster and c["game_id"] in games.values():
+            rows = page.get("data")
+            for c in rows if isinstance(rows, list) else ():
+                if (isinstance(c, dict) and isinstance(c.get("id"), str)
+                        and c.get("broadcaster_id") == broadcaster and c.get("game_id") in games.values()):
                     clips[c["id"]] = dict(c, campaign=channels[broadcaster])
             cursor = page.get("pagination", {}).get("cursor")
             if not cursor:
                 break
             params["after"] = cursor
+    return games, clips
+
+
+def discover(db, channels, config):
+    now = datetime.now(timezone.utc)
+    twitch = {k: v for k, v in channels.items() if not k.startswith("kick:")}
+    games, clips = twitch_clips(twitch, config, now) if twitch else ({}, {})
+    handles = [k.removeprefix("kick:") for k in channels if k.startswith("kick:")]
+    if handles:
+        try:
+            clips.update((c["id"], c) for c in fetch_kick_clips(handles, now=now))
+        except RuntimeError:
+            if not twitch:
+                raise
+            print("Kick feeds unavailable this run; continuing with Twitch.", file=sys.stderr)
     keys = list(clips)
     used = set()
     for i in range(0, len(keys), 200):
         group = keys[i:i+200]
         used.update(k for k, value in zip(group, db.hmget(LEDGER, group)) if value)
-    return select(games, clips.values(), used, end)
+    return select(games, clips.values(), used, now)
 
 
 def compilation(clips):
@@ -126,8 +156,16 @@ def sources_config():
     for campaign in config["priority_streamers"]:
         if campaign.get("broadcaster_id"):
             channels[str(campaign["broadcaster_id"])] = campaign
-    if not channels or not all(re.fullmatch(r"[0-9]+", i) for i in channels):
+    if not all(re.fullmatch(r"[0-9]+", i) for i in channels):
         raise ValueError("Set cleared numeric Twitch broadcaster IDs in streamers.json or ALLOWED_BROADCASTER_IDS.")
+    for handle in os.getenv("ALLOWED_KICK_CHANNELS", "").lower().split(","):
+        handle = handle.strip()
+        if handle:
+            if not re.fullmatch(r"[a-z0-9_-]+", handle):
+                raise ValueError("Invalid Kick channel in ALLOWED_KICK_CHANNELS")
+            channels["kick:" + handle] = {}
+    if not channels:
+        raise ValueError("Set cleared Twitch broadcaster IDs or ALLOWED_KICK_CHANNELS.")
     return channels, config
 
 
@@ -151,10 +189,23 @@ def enqueue(root):
 
 
 def queued(db, channels, config):
-    rows = [json.loads(v) for v in db.lrange(QUEUE, 0, 49)]
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=config["lookback_hours"])
-    rows = [(game, c) for game, c in rows if c["broadcaster_id"] in channels and
-            datetime.fromisoformat(c["created_at"].replace("Z", "+00:00")) >= cutoff]
+    rows = []
+    now = datetime.now(timezone.utc)
+    for raw in db.lrange(QUEUE, 0, 49):
+        try:
+            entry = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(entry, list) or len(entry) != 2:
+            continue
+        game, c = entry
+        if (game not in (VI, V) or not isinstance(c, dict) or not isinstance(c.get("id"), str)
+                or not isinstance(c.get("broadcaster_id"), str) or c["broadcaster_id"] not in channels):
+            continue
+        created = timestamp(c.get("created_at"))
+        hours = min(3, config["lookback_hours"]) if c.get("platform") == "kick" else config["lookback_hours"]
+        if created and now - timedelta(hours=hours) <= created <= now:
+            rows.append((game, c))
     if not rows:
         return VI, []
     used = db.hmget(LEDGER, [c["id"] for _, c in rows])
@@ -180,22 +231,35 @@ def prepare(root):
     model, sources, speech = None, {}, {}
     def load(c):
         nonlocal model
-        if c["id"] in sources:
-            return
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", c["id"]):
-            raise ValueError("Invalid Twitch clip slug")
+        kick = c.get("platform") == "kick"
+        slug = c["id"].removeprefix("kick:") if kick else c["id"]
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug):
+            raise ValueError("Invalid source clip slug")
+        if kick:
+            handle = c["broadcaster_id"].removeprefix("kick:")
+            url = kick_media_url(c.get("media_url"), slug) or f"https://kick.com/{handle}/clips/{slug}"
+        else:
+            url = "https://clips.twitch.tv/" + slug
         base = f"src{len(sources)}"
         with YoutubeDL({"quiet": True, "noplaylist": True, "cachedir": False, "socket_timeout": 30,
                         "format": "best[ext=mp4]/best", "outtmpl": str(root / (base+".%(ext)s"))}) as ydl:
-            info = ydl.extract_info("https://clips.twitch.tv/" + c["id"], download=True)
+            info = ydl.extract_info(url, download=True)
+            if not isinstance(info, dict):
+                return False
             src = Path(ydl.prepare_filename(info))
         sources[c["id"]] = src
         metadata = probe(src)
-        video = next(s for s in metadata["streams"] if s["codec_type"] == "video")
+        video = next((s for s in metadata["streams"] if s["codec_type"] == "video"), None)
+        if video is None:
+            return False
         c["duration"] = min(float(video.get("duration") or metadata["format"]["duration"]),
                             c["duration"])
         if not any(s["codec_type"] == "audio" for s in metadata["streams"]):
-            return False
+            c["trim"] = 0
+            c["duration"] = min(44.0, c["duration"])
+            c["hype_hits"] = []
+            speech[c["id"]] = []
+            return True
         trim, active = analyze_audio(src, c["duration"])
         if not active:
             return False
@@ -205,8 +269,12 @@ def prepare(root):
             model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
                                  download_root=str(root / "model"))
         segments, _ = model.transcribe(str(src), word_timestamps=True, beam_size=1, vad_filter=True)
-        words = [(max(0, w.start-trim), w.end-trim, w.word.strip()) for seg in segments
-                 for w in (seg.words or []) if w.word.strip() and w.end > max(trim, w.start)]
+        words = []
+        for segment in segments:
+            for word in getattr(segment, "words", None) or ():
+                start, end, text = (getattr(word, key, None) for key in ("start", "end", "word"))
+                if valid_word((start, end, text)) and end > trim:
+                    words.append((max(0, start - trim), end - trim, text.strip()))
         speech[c["id"]] = words
         transcript = " ".join(w.casefold() for start, end, w in words if start < c["duration"])
         c["hype_hits"] = [kw for kw in config["hype_keywords"] if kw.casefold() in transcript]
@@ -217,7 +285,7 @@ def prepare(root):
         try:
             accepted = load(c)
         except DownloadError:
-            print(f"Skipped unavailable Twitch clip {c['id']}.")
+            print(f"Skipped unavailable clip {c['id']}.")
             continue
         if not accepted:
             continue
@@ -228,7 +296,7 @@ def prepare(root):
         if short and group:
             break
     if short is None:
-        print("No active-audio clip long enough for a 25-second Short.")
+        print("No eligible clip long enough for a 25-second Short.")
         return
     editorial = json.loads(Path(__file__).with_name("editorial.json").read_text())
     def cut(c, file, length, youtube=False):
@@ -238,7 +306,7 @@ def prepare(root):
         credit = c["broadcaster_name"]
         if youtube and c["campaign"].get("campaign_watermark"):
             credit += "  |  " + c["campaign"]["campaign_watermark"]
-        render(sources[c["id"]], root/file, length, speech[c["id"]], edit.get("hook") or c["title"],
+        render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], edit.get("hook") or curiosity_hook(c["title"]),
                credit, notes=notes, start=c["trim"],
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
     cut(short, "youtube.mp4", short["duration"], youtube=True)
@@ -322,9 +390,14 @@ def publish(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["enqueue", "prepare", "publish"])
-    parser.add_argument("work", type=Path)
+    parser.add_argument("action", choices=["enqueue", "prepare", "publish", "kick-trending"])
+    parser.add_argument("work", type=Path, nargs="?")
     args = parser.parse_args()
+    if args.action == "kick-trending":
+        print(json.dumps(fetch_kick_clips(), indent=2))
+        return
+    if args.work is None:
+        parser.error("this action needs a work directory")
     root = args.work.resolve()
     if not root.is_dir() or Path(tempfile.gettempdir()).resolve() not in root.parents:
         parser.error("use a dedicated existing subdirectory of the system temp directory")
