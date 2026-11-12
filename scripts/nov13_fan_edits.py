@@ -70,7 +70,7 @@ def prepare(out):
                 print("Too short:", slug,duration,flush=True)
                 continue
             # Preserve the payoff at the end of the fan-clipped moment.
-            start = max(0.,duration-length-.08)
+            start = max(0.,round(duration-length-.08, 3))
             for start,length in [(start,length)] + ([(0,18.5)] if duration >= 20 else []):
                 samples = decode_audio(src,length,start=start)
                 segments,_ = model.transcribe(samples, word_timestamps=True, vad_filter=True, beam_size=1)
