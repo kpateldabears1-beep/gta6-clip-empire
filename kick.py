@@ -19,8 +19,12 @@ def timestamp(value):
     return parsed if parsed.tzinfo is not None else None
 
 
-def clip_page(username, params):
-    url = f"https://kick.com/api/v2/channels/{username}/clips?{urlencode(params)}"
+GTA_NAMES = {"grand-theft-auto-v": "Grand Theft Auto V", "grand-theft-auto-vi": "Grand Theft Auto VI"}
+
+
+def clip_page(slug, params, *, category=False):
+    section = "categories" if category else "channels"
+    url = f"https://kick.com/api/v2/{section}/{slug}/clips?{urlencode(params)}"
     response = subprocess.run(["curl", "--silent", "--show-error", "--fail", "--max-time", "15",
                                "--header", "Accept: application/json", url],
                               capture_output=True, check=True)
@@ -38,7 +42,7 @@ def kick_media_url(value, slug):
     return None
 
 
-def fetch_kick_clips(usernames=None, *, now=None):
+def fetch_kick_clips(usernames=None, *, now=None, include_gta_categories=False):
     """Return distinct public clips from the past three hours, fastest-growing first."""
     if usernames is None:
         config = json.loads(Path(__file__).with_name("streamers.json").read_text())
@@ -53,13 +57,15 @@ def fetch_kick_clips(usernames=None, *, now=None):
     usernames = list(usernames)
     if any(not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_-]+", name) for name in usernames):
         raise ValueError("Invalid Kick channel slug")
-    usernames = list(dict.fromkeys(usernames))
-    for username in usernames:
+    feeds = [(name, False) for name in dict.fromkeys(usernames)]
+    if include_gta_categories:
+        feeds.extend((game, True) for game in GTA_NAMES)
+    for feed_slug, is_category in feeds:
         params = {"sort": "date", "time": "day"}
         cursors = set()
         try:
             while True:
-                page = clip_page(username, params)
+                page = clip_page(feed_slug, params, category=is_category)
                 reached_cutoff = False
                 for row in page["clips"]:
                     if not isinstance(row, dict):
@@ -73,7 +79,11 @@ def fetch_kick_clips(usernames=None, *, now=None):
                     channel = row.get("channel")
                     category = row.get("category")
                     slug, title = row.get("id"), row.get("title")
-                    if (not isinstance(channel, dict) or channel.get("slug") != username
+                    username = channel.get("slug") if isinstance(channel, dict) else None
+                    category_slug = category.get("slug") if isinstance(category, dict) else None
+                    if (not isinstance(username, str) or not re.fullmatch(r"[a-z0-9_-]+", username)
+                            or (not is_category and username != feed_slug)
+                            or (is_category and category_slug != feed_slug)
                             or row.get("privacy", "public") != "public"
                             or not isinstance(slug, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", slug)
                             or not isinstance(title, str) or not title.strip()):
@@ -87,6 +97,8 @@ def fetch_kick_clips(usernames=None, *, now=None):
                         continue
                     minutes = (now - created).total_seconds() / 60
                     game = category.get("name") if isinstance(category, dict) else None
+                    if isinstance(category_slug, str) and category_slug in GTA_NAMES:
+                        game = GTA_NAMES[category_slug]
                     clip_id = "kick:" + slug
                     found[clip_id] = {
                         "id": clip_id, "platform": "kick", "title": title.strip(),
@@ -101,12 +113,14 @@ def fetch_kick_clips(usernames=None, *, now=None):
                 cursor = page.get("nextCursor")
                 if reached_cutoff or not page["clips"] or not isinstance(cursor, str) or not cursor or cursor in cursors:
                     break
+                if is_category and len(cursors) >= 9:  # Scan ten recent pages per game per report.
+                    break
                 cursors.add(cursor)
                 params["cursor"] = cursor
         except (subprocess.CalledProcessError, ValueError) as error:
-            failures.append(username)
+            failures.append(feed_slug)
             detail = error.stderr.decode(errors="replace").strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
-            print(f"Kick feed unavailable for {username}: {detail}", file=sys.stderr)
-    if failures and len(failures) == len(usernames) and not found:
+            print(f"Kick feed unavailable for {feed_slug}: {detail}", file=sys.stderr)
+    if failures and len(failures) == len(feeds) and not found:
         raise RuntimeError("All requested Kick feeds were unavailable")
     return sorted(found.values(), key=lambda c: (-c["velocity"], -c["view_count"], c["id"]))

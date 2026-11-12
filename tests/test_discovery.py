@@ -38,6 +38,17 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual((game, [c["id"] for c in clips]), (main.V, ["kick:a"]))
             twitch.assert_not_called()
 
+    def test_gta_category_candidates_keep_their_actual_streamer(self):
+        now = datetime.now(timezone.utc)
+        row = {"id": "new", "title": "Freeway chase", "created_at": now.isoformat(), "duration": 22,
+               "views": 10, "channel": {"slug": "newcreator"},
+               "category": {"name": "Grand Theft Auto V (GTA)", "slug": "grand-theft-auto-v"}}
+        with patch.object(kick, "clip_page", side_effect=[{"clips": [row]}, {"clips": [row]}]):
+            clips = kick.fetch_kick_clips([], now=now, include_gta_categories=True)
+        self.assertEqual([(c["broadcaster_id"], c["game_id"]) for c in clips], [("kick:newcreator", main.V)])
+        with patch.object(kick, "clip_page", return_value={"clips": [row]}):
+            self.assertFalse(kick.fetch_kick_clips(["licensed-other-creator"], now=now))
+
     def test_empty_and_malformed_clip_and_caption_sequences(self):
         db = Mock()
         db.lrange.return_value = ["{}", "null", "[5]", '["game", null]', "broken"]

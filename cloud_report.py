@@ -38,7 +38,7 @@ def view_report(db, channel, now):
         pipe.set(base + ":latest", snapshot, ex=35*86400)
         pipe.set(base + ":" + now.strftime("%Y-%m-%d"), snapshot, ex=35*86400)
         pipe.execute()
-    lines = ["### Recent YouTube uploads", f"{len(counts)} videos in the public feed · {sum(counts.values()):,} displayed views"]
+    lines = ["### Recent YouTube uploads", f"Recent public uploads: {len(counts)} · {sum(counts.values()):,} displayed views"]
     last = previous.get("views", {})
     if previous:
         lines.append("Previous observation: " + previous["at"])
@@ -54,10 +54,10 @@ def view_report(db, channel, now):
 
 
 def candidate_report(now):
-    clips = fetch_kick_clips(now=now)
+    clips = fetch_kick_clips(now=now, include_gta_categories=True)
     picks = ranked([c for c in clips if c.get("game_id") in (V, VI)], set(), now)
     lines = ["### Public Kick discovery",
-             f"{len(clips)} recent clips on the watchlist · {len(picks)} ranked GTA candidates (up to 50)"]
+             f"{len(clips)} distinct recent clips across the watchlist and GTA category feeds · {len(picks)} ranked GTA candidates (up to 50)"]
     for clip in picks[:5]:
         # Titles are external input. Keep the public summary limited to normalized IDs and numbers.
         lines.append(f"- [{clip['broadcaster_id']}]({clip['url']}) · {clip['velocity']:.1f} views/minute · {clip['duration']:g}s")
