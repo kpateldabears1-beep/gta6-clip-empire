@@ -30,6 +30,7 @@ def youtube(path, clip, game):
     while result is None:
         _, result = request.next_chunk(num_retries=3)
     print("YouTube reported visibility:", result.get("status", {}).get("privacyStatus", "unknown"))
+    print("YouTube destination channel:", result.get("snippet", {}).get("channelId", "unknown"))
     return result["id"]
 
 

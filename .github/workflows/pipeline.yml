@@ -10,6 +10,10 @@ on:
         type: choice
         options: [preview, deliver, verify, gta5-sample]
         default: preview
+      publish_sample:
+        description: Publish the GTA V sample once to the authorized YouTube channel
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -137,3 +141,56 @@ jobs:
         if: always()
         run: |
           case "${CLIP_WORK:-}" in /tmp/gta-clips.*) rm -rf -- "$CLIP_WORK";; esac
+
+  publish-sample:
+    needs: pipeline
+    if: inputs.mode == 'gta5-sample' && inputs.publish_sample && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: gta5-freeway-short
+          path: ${{ runner.temp }}/gta5-short
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'google-api-python-client>=2.150,<3' 'google-auth-httplib2>=0.2,<1'
+      - name: Reserve this one-off upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          endpoint="repos/$GITHUB_REPOSITORY/deployments"
+          env_name=gta5-freeway-sample
+          count=$(gh api "$endpoint?environment=$env_name&per_page=1" --jq length)
+          if [ "$count" != 0 ]; then
+            echo "This sample already has an upload reservation. Check its earlier run and YouTube Studio."
+            exit 1
+          fi
+          jq -n --arg ref "$GITHUB_SHA" --arg env "$env_name" \
+            '{ref:$ref,environment:$env,auto_merge:false,required_contexts:[],production_environment:false}' \
+            | gh api "$endpoint" --input - --jq '.id'
+      - name: Upload through the production YouTube client
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          from pathlib import Path
+          from delivery import youtube
+          clip = {"title": "Three Trucks, One Freeway Ramp in GTA V",
+                  "broadcaster_name": "Unlisted Thoughts (CC0). Edit and sound design by Daily Getaway Clips.",
+                  "url": "https://archive.org/details/ut-gtav-b-roll"}
+          video_id = youtube(Path(os.environ["RUNNER_TEMP"]) / "gta5-short/gta5-freeway.mp4", clip, "Grand Theft Auto V")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              print(f"[View the GTA V Short](https://www.youtube.com/shorts/{video_id})", file=summary)
+          print(f"YouTube Short: https://www.youtube.com/shorts/{video_id}")
+          PYTHON
