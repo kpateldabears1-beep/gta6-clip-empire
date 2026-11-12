@@ -1,0 +1,112 @@
+name: GTA clips
+on:
+  schedule:
+    - cron: '0 * * * *'
+    - cron: '30 23 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Delivery mode
+        type: choice
+        options: [preview, deliver]
+        default: preview
+
+permissions:
+  contents: read
+concurrency:
+  group: gta-clips
+  cancel-in-progress: false
+
+env:
+  DAILY_POST_CAP: ${{ vars.DAILY_POST_CAP || secrets.DAILY_POST_CAP || '5' }}
+
+jobs:
+  pipeline:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Space scheduled runs across the day
+        id: slot
+        env:
+          RULE: ${{ github.event.schedule }}
+        run: |
+          python3 - <<'PYTHON'
+          from datetime import datetime, timezone
+          import os
+          cap = int(os.environ["DAILY_POST_CAP"])
+          if not 1 <= cap <= 25:
+              raise SystemExit("DAILY_POST_CAP must be between 1 and 25")
+          hour = datetime.now(timezone.utc).hour
+          rule = os.environ["RULE"]
+          hourly = min(cap, 24)
+          due = not rule or (cap == 25 if rule == "30 23 * * *" else hour * hourly % 24 < hourly)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print("due=" + str(due).lower(), file=f)
+          PYTHON
+      - uses: actions/checkout@v4
+        if: steps.slot.outputs.due == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: steps.slot.outputs.due == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install media tools
+        if: steps.slot.outputs.due == 'true'
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          python -m pip install -r requirements.txt
+      - name: Allocate private workspace
+        if: steps.slot.outputs.due == 'true'
+        run: |
+          work=$(mktemp -d /tmp/gta-clips.XXXXXXXX)
+          echo "CLIP_WORK=$work" >> "$GITHUB_ENV"
+          echo "HF_HOME=$work/hf" >> "$GITHUB_ENV"
+      - name: Find and render cleared clips
+        id: render
+        if: steps.slot.outputs.due == 'true'
+        env:
+          DELIVERY_MODE: ${{ inputs.mode || 'deliver' }}
+          ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: |
+          if [ "$DELIVERY_MODE" = deliver ]; then python main.py enqueue "$CLIP_WORK"; fi
+          python main.py prepare "$CLIP_WORK"
+          if test -s "$CLIP_WORK/batch.json"; then echo 'ready=true' >> "$GITHUB_OUTPUT"; fi
+      - name: Save videos and source credits for review
+        if: steps.render.outputs.ready == 'true'
+        id: archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta-clips-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CLIP_WORK }}/youtube.mp4
+            ${{ env.CLIP_WORK }}/tiktok.mp4
+            ${{ env.CLIP_WORK }}/batch.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Deliver videos
+        if: steps.render.outputs.ready == 'true' && (github.event_name == 'schedule' || inputs.mode == 'deliver')
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID || secrets.YOUTUBE_CLIENT_ID_1 }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET || secrets.YOUTUBE_CLIENT_SECRET_1 }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN || secrets.YOUTUBE_REFRESH_TOKEN_1 }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          ARTIFACT_ID: ${{ steps.archive.outputs.artifact-id }}
+        run: python main.py publish "$CLIP_WORK"
+      - name: Remove this run's media and model
+        if: always()
+        run: |
+          case "${CLIP_WORK:-}" in /tmp/gta-clips.*) rm -rf -- "$CLIP_WORK";; esac

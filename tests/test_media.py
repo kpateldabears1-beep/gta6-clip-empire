@@ -1,0 +1,40 @@
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from render import analyze_audio, join, probe, render, seconds
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs FFmpeg with libass")
+class MediaTests(unittest.TestCase):
+    def test_render_and_join_with_speech_timing_and_a_silent_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            parts = []
+            for i, duration in enumerate([33, 32]):
+                source = root / f"source{i}.mp4"
+                cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=blue:s=320x180:r=10"]
+                if i == 0:
+                    cmd += ["-f", "lavfi", "-i", "sine=frequency=500", "-af", "adelay=2000"]
+                subprocess.run(cmd + ["-t", str(duration), "-c:v", "libx264", str(source)], check=True)
+                if i == 0:
+                    trim, active = analyze_audio(source, duration)
+                    self.assertTrue(active)
+                    self.assertAlmostEqual(trim, 1.5)
+                part = root / f"part{i}.mp4"
+                render(source, part, duration, [(0, .6, "Look"), (.6, 1, "here")], "The getaway", "Tester",
+                       notes=[{"start": 0, "end": 3, "text": "Watch the gap"}],
+                       facecam=[0, 0, .3, .3] if i else None)
+                self.assertLess(seconds(part), 58)
+                parts.append(part)
+            joined = root / "tiktok.mp4"
+            join(parts, joined)
+            self.assertTrue(62 < seconds(joined) < 66)
+            streams = probe(joined)["streams"]
+            v = next(s for s in streams if s["codec_type"] == "video")
+            self.assertEqual((v["width"], v["height"], v["codec_name"]), (1080, 1920, "h264"))
+            self.assertTrue(any(s["codec_name"] == "aac" and s["sample_rate"] == "44100"
+                                for s in streams))
+            subprocess.run(["ffmpeg","-v","error","-xerror","-i",str(joined),"-f","null","-"], check=True)
