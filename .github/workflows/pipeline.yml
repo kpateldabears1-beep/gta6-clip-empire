@@ -107,6 +107,7 @@ jobs:
         id: slot
         env:
           RULE: ${{ github.event.schedule }}
+          NOV13_VERIFIED_RUN: ${{ vars.NOV13_VERIFIED_RUN }}
           ALLOWED_KICK_CHANNELS: ${{ vars.ALLOWED_KICK_CHANNELS }}
           ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}
         run: |
@@ -121,6 +122,10 @@ jobs:
           rule = os.environ["RULE"]
           now = datetime.now(ZoneInfo("America/Chicago"))
           due = not rule or (now.date() >= date(2026,11,13) and now.hour in (8,11,14,17,20) and now.minute >= 15)
+          if rule and now.date() == date(2026,11,13) and os.environ["NOV13_VERIFIED_RUN"]:
+              due = False
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  print("The verified November 13 fan-edit batch owns today's five windows.", file=summary)
           if rule and due:
               with open(os.environ["GITHUB_ENV"], "a") as env:
                   print("PREFERRED_CLIP_PLATFORM=" + ("kick" if now.hour in (8,14,20) else "twitch"), file=env)
