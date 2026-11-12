@@ -33,9 +33,10 @@ def music_mix(video, track=None, *, preserve_audio=False):
         bed = (f"[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
                f"afade=t=in:d=0.06,afade=t=out:st={max(0,duration-.45):.3f}:d=0.45")
         if preserve_audio:
-            # Keep the live reaction in front and turn the instrumental down during speech.
-            fx = (bed + ",volume=0.20[bed];[0:a]asplit[voice][key];"
-                  "[bed][key]sidechaincompress=threshold=0.025:ratio=6:attack=15:release=240[ducked];"
+            # The streamer/reaction is the story. Music is a subtle, CC0-only texture
+            # which ducks aggressively whenever there is live speech.
+            fx = (bed + ",volume=0.12[bed];[0:a]asplit[voice][key];"
+                  "[bed][key]sidechaincompress=threshold=0.015:ratio=8:attack=10:release=300[ducked];"
                   "[voice][ducked]amix=inputs=2:duration=first:normalize=0,")
         else:
             fx = bed + ","

@@ -11,7 +11,7 @@ from render import subtitles
 
 
 class CaptionTests(unittest.TestCase):
-    def test_watermark_hook_and_pairs_cover_the_full_cut(self):
+    def test_brief_branding_and_sparse_captions_keep_the_moment_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
             ass = Path(tmp) / "cut.ass"
             for platform in ("Kick", "Twitch"):
@@ -19,15 +19,15 @@ class CaptionTests(unittest.TestCase):
                           "@Example", platform=platform, campaign="Creator event")
                 data = ass.read_text()
                 self.assertEqual([line for line in data.splitlines() if ",Credit,," in line],
-                                 ["Dialogue: 0,0:00:00.00,0:00:06.00,Credit,,0,0,0,,Clip: @Example Creator event"])
-                self.assertIn("0:00:00.00,0:00:06.00,Hook,", data)
+                                 ["Dialogue: 0,0:00:00.00,0:00:02.50,Credit,,0,0,0,,Clip: @Example Creator event"])
+                self.assertIn("0:00:00.00,0:00:01.80,Hook,", data)
                 rows = [line.split(",", 9) for line in data.splitlines() if ",Caption,," in line]
-                self.assertEqual(rows[0][1], "0:00:00.00")
-                self.assertEqual(rows[-1][2], "0:00:06.00")
-                self.assertTrue(all(row[2] == nxt[1] for row, nxt in zip(rows, rows[1:])))
-                spoken = [row[-1] for row in rows if "Gameplay footage" not in row[-1]]
+                self.assertEqual(rows[0][1], "0:00:01.00")
+                self.assertEqual(rows[-1][2], "0:00:05.05")
+                self.assertTrue(all(row[2] < nxt[1] for row, nxt in zip(rows, rows[1:])))
+                spoken = [row[-1] for row in rows]
                 self.assertEqual([re.sub(r"\{[^}]*\}", "", line) for line in spoken],
-                                 ["look here", "look here", "here now"])
+                                 ["look here", "now"])
                 self.assertTrue(all(r"\t(0,90," in line for line in spoken))
 
 

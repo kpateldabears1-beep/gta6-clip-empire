@@ -3,7 +3,7 @@ import hashlib
 import json
 import re
 import subprocess
-from math import isfinite
+from math import ceil, isfinite
 
 from music_screen import audio_activity, decode_audio
 
@@ -82,15 +82,16 @@ PlayResY: 1920
 WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,DejaVu Sans,68,&H0000E7FF,&H00FFFFFF,&H00090909,&H70000000,-1,0,0,0,100,100,0,0,1,5,2,5,86,86,0,1
-Style: Hook,DejaVu Sans,64,&H00FFFFFF,&H00FFFFFF,&H00302014,&H80302014,-1,0,0,0,100,100,0,0,3,12,0,8,80,80,260,1
-Style: Credit,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00202020,&H00202020,-1,0,0,0,100,100,0,0,3,5,0,1,58,96,165,1
+Style: Caption,DejaVu Sans,54,&H0000E7FF,&H00FFFFFF,&H00090909,&H70000000,-1,0,0,0,100,100,0,0,1,5,2,5,86,86,0,1
+Style: Hook,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00302014,&H80302014,-1,0,0,0,100,100,0,0,3,10,0,8,80,80,260,1
+Style: Credit,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00202020,&H00202020,-1,0,0,0,100,100,0,0,3,4,0,1,58,96,165,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""]
     def add(start, end, style, value):
         if end > start:
             lines.append(f"Dialogue: 0,{stamp(start)},{stamp(end)},{style},,0,0,0,,{value}")
-    add(0, length, "Hook", safe(title)[:68])
+    # A brief opener earns the first second; permanent banners obscure the actual moment.
+    add(0, min(length, 1.8), "Hook", safe(title)[:68])
     name = safe(name).strip().lstrip("@")
     if platform in ("Twitch", "Kick"):
         if not name:
@@ -100,31 +101,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         credit = "Credit: " + name
     if campaign:
         credit = (credit + " " + safe(campaign)).rstrip()
-    add(0, length, "Credit", credit)
+    add(0, min(length, 2.5), "Credit", credit)
     for note in notes:
         add(max(0, float(note["start"])), min(length, float(note["end"])), "Credit",
             r"{\an5\pos(540,1470)}" + safe(note["text"])[:150])
     words = [item for item in words if valid_word(item)] if isinstance(words, (tuple, list)) else []
     words = sorted((max(0, s), min(length, e), w) for s, e, w in words if s < length and e > 0)
-    pos = r"{\pos(540,1070)}"
-    gap = r"{\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" + gap
-    cursor, previous_pair = 0, None
-    for i, (start, end, _) in enumerate(words):
-        start = max(start, cursor)
-        if end <= start:
-            continue
-        # Hold the pair between adjacent words to avoid flashing a cue on tiny pauses.
-        pause_text = previous_pair if previous_pair and start - cursor <= .35 else gap
-        add(cursor, start, "Caption", pos + pause_text)
-        # Reuse the preceding word for an odd final word rather than inventing a partner.
-        pair = min(i // 2 * 2, max(0, len(words) - 2))
-        previous_pair = " ".join(safe(w) for _, _, w in words[pair:pair+2])
-        phrase = " ".join((r"{\1c&H00E7FF&\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" if j == i
-                           else r"{\1c&H00E7FF&\fscx100\fscy100}") + safe(w)
-                          for j, (_, _, w) in enumerate(words[pair:pair+2], pair))
-        add(start, end, "Caption", pos + phrase)
-        cursor = end
-    add(cursor, length, "Caption", pos + gap)
+    # Subtitles support an audible reaction; they do not narrate every quiet frame.
+    # Keep at most six short cards and leave every gap clear for the footage.
+    if words:
+        pos = r"{\pos(540,1430)}"
+        stride = max(2, ceil(len(words) / 6))
+        for index in range(0, len(words), stride):
+            group = words[index:index + stride]
+            start = group[0][0]
+            next_start = words[index + stride][0] if index + stride < len(words) else length
+            end = min(length, max(group[-1][1], start + 1.05), next_start - .08)
+            phrase = " ".join(safe(word) for _, _, word in group)[:80]
+            if phrase:
+                add(start, end, "Caption", pos + r"{\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" + phrase)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

@@ -152,6 +152,20 @@ def enough_speech(words, length):
     return sum(end <= length for _, end, _ in words) >= 4
 
 
+def moment_score(clip, transcript):
+    """Rank clips that contain an identifiable action and a spoken reaction."""
+    terms = ("crash", "jump", "ramp", "stunt", "chase", "escape", "getaway", "cop", "police",
+             "heist", "rob", "raid", "clutch", "caught", "shot", "flip", "flying", "explod",
+             "scream", "yell", "lose", "win")
+    title = str(clip.get("title") or "").casefold()
+    spoken = str(transcript or "").casefold()
+    title_hits = sum(term in title for term in terms)
+    speech_hits = sum(term in spoken for term in terms)
+    reaction_hits = len(clip.get("hype_hits") or ())
+    pace = float(clip.get("words_per_minute") or 0)
+    return title_hits * 3 + speech_hits + reaction_hits * 2 + int(55 <= pace <= 260)
+
+
 def compilation(clips, speech=None):
     # At most six screened candidates. Check the actual excerpt each source would contribute.
     for size in (2, 3):
@@ -357,10 +371,13 @@ def prepare(root):
         transcript = " ".join(w.casefold() for start, end, w in words if start < c["duration"])
         c["words_per_minute"] = round(60 * len(words) / c["duration"], 1)
         c["hype_hits"] = [kw for kw in config["hype_keywords"] if kw.casefold() in transcript]
+        c["moment_score"] = moment_score(c, transcript)
         return True
 
     eligible, short, group = [], None, []
-    for c in candidates[:6]:
+    probe_limit = min(20, max(1, int(config.get("candidate_probe_limit", 6))))
+    minimum_moment_score = int(config.get("minimum_moment_score", 0))
+    for c in candidates[:probe_limit]:
         try:
             accepted = load(c)
         except DownloadError:
@@ -368,16 +385,18 @@ def prepare(root):
             continue
         if not accepted:
             continue
+        if c["moment_score"] < minimum_moment_score:
+            print(f"Skipped {c['id']}: no clear action or reaction moment.")
+            continue
         eligible.append(c)
-        # Discovery is already ordered by view velocity. Prefer a spoken reaction
-        # among the same candidates and use that original ordering to break ties.
-        if short is None or len(c["hype_hits"]) > len(short["hype_hits"]):
+        # Discovery is ordered by view velocity. Within that ranking, favor a concrete
+        # event, then a spoken reaction rather than generic gameplay.
+        if short is None or (c["moment_score"], len(c["hype_hits"])) > (
+                short["moment_score"], len(short["hype_hits"])):
             short = c
         group = compilation(eligible, speech)
-        if group and short["hype_hits"]:
-            break
     if short is None:
-        print("No eligible source passed the duration and speech checks.")
+        print("No eligible source had a clear action or reaction moment.")
         return
     editorial = json.loads(Path(__file__).with_name("editorial.json").read_text())
     def cut(c, file, length):
@@ -388,7 +407,7 @@ def prepare(root):
         render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], c["title"],
                c["broadcaster_login"], platform=platform, campaign=c["campaign"].get("campaign_watermark"),
                notes=notes, start=c["trim"], hook=edit.get("hook"),
-               facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
+               facecam=editorial["facecams"].get(c["broadcaster_id"]))
     short_file = root / "youtube-rendering.mp4"
     cut(short, short_file.name, short["duration"])
     if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
