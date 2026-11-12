@@ -68,7 +68,7 @@ def select(games, clips, used, now=None):
 def twitch_clips(channels, config, end):
     import requests
     r = requests.post("https://id.twitch.tv/oauth2/token", data={
-        "client_id": os.environ["TWITCH_CLIENT_ID"], "client_secret": os.environ["TWITCH_CLIENT_SECRET"],
+        "client_id": cloud_archive.required("TWITCH_CLIENT_ID"), "client_secret": cloud_archive.required("TWITCH_CLIENT_SECRET"),
         "grant_type": "client_credentials"}, timeout=25)
     r.raise_for_status()
     headers = {"Client-Id": os.environ["TWITCH_CLIENT_ID"],
@@ -313,18 +313,22 @@ def prepare(root):
         render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], c["title"],
                credit, notes=notes, start=c["trim"], hook=edit.get("hook"),
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
-    cut(short, "youtube.mp4", short["duration"], youtube=True)
-    if not 25 <= seconds(root/"youtube.mp4") <= 45:
+    short_file = root / "youtube-rendering.mp4"
+    cut(short, short_file.name, short["duration"], youtube=True)
+    if not 25 <= seconds(short_file) <= 45:
         raise RuntimeError("Rendered Short outside 25–45 second target")
+    short_file.replace(root / "youtube.mp4")
     if group:
         parts = []
         for i, (c, length) in enumerate(zip(group, portions([c["duration"] for c in group]))):
             file = f"part{i}.mp4"
             cut(c, file, length)
             parts.append(root/file)
-        join(parts, root/"tiktok.mp4")
-        if not 62 < seconds(root/"tiktok.mp4") < 66:
+        compilation_file = root / "tiktok-rendering.mp4"
+        join(parts, compilation_file)
+        if not 62 < seconds(compilation_file) < 66:
             raise RuntimeError("Rendered compilation outside target length")
+        compilation_file.replace(root / "tiktok.mp4")
     else:
         print("Insufficient distinct footage for TikTok; keeping the YouTube Short.")
     (root/"batch.json").write_text(json.dumps({"game": game, "short": short, "group": group}))

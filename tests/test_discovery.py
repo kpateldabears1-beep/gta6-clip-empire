@@ -74,6 +74,7 @@ class DiscoveryTests(unittest.TestCase):
                 "streams": [{"codec_type": "video", "duration": "30"}]}))
             stack.enter_context(patch.object(main, "seconds", return_value=30))
             render = stack.enter_context(patch.object(main, "render_vertical_short"))
+            render.side_effect = lambda source, output, *args, **kwargs: output.touch()
             main.prepare(root)
             dl.extract_info.assert_called_once_with("https://kick.com/lacy/clips/clip_abc", download=True)
             whisper.assert_not_called()

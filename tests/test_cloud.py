@@ -39,6 +39,19 @@ class MonitoringTests(unittest.TestCase):
             self.assertIn("R2: ValueError", stored)
             self.assertNotIn("private", stored)
 
+    def test_scheduled_failure_includes_failed_step_and_safe_diagnostic(self):
+        job = {"name": "health", "conclusion": "failure", "id": 1,
+               "steps": [{"name": "Install dependencies", "conclusion": "failure"}]}
+        env = {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "231", "GITHUB_RUN_ATTEMPT": "2"}
+        with patch.dict(os.environ, env, clear=True), patch("subprocess.check_output", return_value=json.dumps({"jobs":[job]})), \
+                patch("subprocess.run", return_value=Mock(returncode=0, stdout=b"secret\n##[error]Process completed with exit code 42.")), \
+                patch.object(monitoring, "send_alert", return_value=True) as send:
+            self.assertTrue(monitoring.failure_alert())
+            message = send.call_args.args[0]
+            self.assertIn("health (failure): Install dependencies", message)
+            self.assertIn("exit code 42", message)
+            self.assertNotIn("secret", message)
+
     def test_dry_run_collects_all_failures_and_never_publishes(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(main, "twitch_clips", return_value=({main.V:"1"}, {})), \
                 patch("kick.clip_page"), patch.dict(os.environ, {}, clear=True), patch.object(main, "store") as db, \

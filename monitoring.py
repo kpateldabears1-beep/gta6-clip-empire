@@ -79,6 +79,14 @@ def failure_alert():
             if job["conclusion"] in ("failure", "timed_out", "cancelled"):
                 steps = [s["name"] for s in job.get("steps", []) if s["conclusion"] in ("failure", "cancelled")]
                 details.append(f"{job['name']} ({job['conclusion']}): " + ", ".join(steps))
+                if not os.getenv("FAILURE_TRACE"):
+                    # Setup/install failures can happen before Python records its stack.
+                    # Extract only numeric runner exit codes; never forward raw logs.
+                    logs = subprocess.run(["gh", "api", f"repos/{repo}/actions/jobs/{job['id']}/logs"],
+                                          capture_output=True, timeout=12)
+                    if logs.returncode == 0:
+                        codes = re.findall(rb"##\[error\]Process completed with exit code (\d+)\.", logs.stdout)
+                        details.extend("Runner exit code " + code.decode() for code in dict.fromkeys(codes))
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         details.append("GitHub step details unavailable.")
     trace = os.getenv("FAILURE_TRACE", "").strip()

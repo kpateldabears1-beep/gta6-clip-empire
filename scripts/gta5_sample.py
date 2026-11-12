@@ -24,13 +24,14 @@ def main(root):
         (14.5, 19.5, "Now watch the red truck clear the ramp in one piece."),
         (19.5, 26, "Back on four wheels. Traffic just keeps going."),
     ]
-    out = root / "gta5-freeway.mp4"
+    out = root / "sample-rendering.mp4"
     render(source, out, 26, [], "Three trucks. One GTA V ramp.", "Unlisted Thoughts",
            notes=[{"start": s, "end": e, "text": t} for s, e, t in notes])
     video = next(s for s in probe(out)["streams"] if s["codec_type"] == "video")
     if (video["width"], video["height"]) != (1080, 1920) or not 25.9 <= seconds(out) <= 26.2:
         raise ValueError("Unexpected sample dimensions or duration")
     subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(out), "-f", "null", "-"], check=True)
+    out.replace(root / "gta5-freeway.mp4")
 
 
 if __name__ == "__main__":
