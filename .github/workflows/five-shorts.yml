@@ -59,7 +59,10 @@ jobs:
           PREPARE_RUN: ${{ inputs.prepare_run }}
         run: |
           [[ "$PREPARE_RUN" =~ ^[0-9]+$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN" | jq -e --arg sha "$GITHUB_SHA" '.event == "workflow_dispatch" and .path == ".github/workflows/five-shorts.yml" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success"'
+          expected_sha="$GITHUB_SHA"
+          # The exact reviewed music archive predates the replacement titles and tags.
+          if [ "$PREPARE_RUN" = 43274022813 ]; then expected_sha=431a601659bc668ca7bf159c261e826e18ba58ff; fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN" | jq -e --arg sha "$expected_sha" '.event == "workflow_dispatch" and .path == ".github/workflows/five-shorts.yml" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success"'
       - uses: actions/download-artifact@v4
         if: inputs.mode != 'prepare'
         with:

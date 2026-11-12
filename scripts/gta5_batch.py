@@ -32,6 +32,16 @@ EDITS = [
 ]
 
 
+# Each caption identifies the footage as Los Santos and invites a specific GTA VI comparison.
+PROMPTS = {
+    2: "A speedboat hits a freeway ramp in Los Santos. What would you tow through #ViceCity in #GTA6?",
+    3: "Watch the spectators on this GTA V freeway. How would you want crowds in #GTA6 to react to a #ViceCity stunt?",
+    4: "Follow the trailer as it swings across the lanes in GTA V. What trailer stunt would you try in #ViceCity in #GTA6?",
+    5: "Pick a landing spot in this Los Santos scrapyard. Would your first #GTA6 stunt in #ViceCity be a rooftop jump or a boat launch?",
+    6: "One Los Santos shot lines up a freeway, a rail yard and a river. Which part of #ViceCity would you explore first in #GTA6?",
+}
+
+
 def run(*args, cwd=None):
     subprocess.run(list(map(str, args)), check=True, cwd=cwd)
 
@@ -95,7 +105,7 @@ def publish_all(root, backup):
     run_id = os.environ["GITHUB_RUN_ID"]
     for edit, path in zip(EDITS, paths):
         i, _, _, title, _, _ = edit
-        key = token(i)
+        key = token(i) + (":music-v1" if path.name in music else "")
         existing = db.hget(LEDGER, key)
         if existing:
             if existing.startswith("{") and json.loads(existing).get("youtube"):
@@ -106,7 +116,8 @@ def publish_all(root, backup):
             raise RuntimeError("Daily cap reached; remaining Shorts are still in the artifact")
         clip = {"title": title, "broadcaster_name": CREDIT + " (CC0 recording). Commentary and edit: Daily Getaway Clips.", "url": ITEM}
         if path.name in music:
-            clip["broadcaster_name"] += "\nMusic: " + music[path.name]
+            clip.update(title=title + " #GTA5", music_credit=music[path.name], description_intro=PROMPTS[i],
+                        campaign={"extra_tags": ["LosSantos", "GTA6", "ViceCity"]})
         receipt = delivery.youtube(path, clip, "Grand Theft Auto V", with_receipt=True)
         ident = receipt["id"]
         visibility = receipt["status"]["privacyStatus"]
