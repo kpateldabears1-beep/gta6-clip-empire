@@ -1,4 +1,5 @@
 """One manually dispatched, deduplicated set of five music-backed GTA V Shorts."""
+from datetime import datetime, timezone
 import argparse
 import hashlib
 import json
@@ -86,6 +87,23 @@ def render_all(root):
     (root/"manifest.json").write_text(json.dumps(manifest, indent=2))
 
 
+# This API receipt explicitly rejected the 5th upload. Other pending uploads are ambiguous.
+REJECTED_RESERVATION = "pending:43275035694"
+FINAL_REMIX = token(6) + ":music-v1"
+RETRY_START = datetime(2026, 11, 13, 18, 0, tzinfo=timezone.utc)
+ARCHIVE_EXPIRY = datetime(2026, 11, 19, 17, 55, tzinfo=timezone.utc)
+
+
+def retry_due(record, now):
+    if not record or not RETRY_START <= now < ARCHIVE_EXPIRY:
+        return False
+    if record == REJECTED_RESERVATION:
+        return True
+    if record.startswith("upload-limit:"):
+        return now.timestamp() >= int(record.split(":")[1])
+    return False
+
+
 def publish_all(root, backup):
     import delivery
     from monitoring import notify_post
@@ -107,6 +125,13 @@ def publish_all(root, backup):
         i, _, _, title, _, _ = edit
         key = token(i) + (":music-v1" if path.name in music else "")
         existing = db.hget(LEDGER, key)
+        if key == FINAL_REMIX and retry_due(existing, datetime.now(timezone.utc)):
+            # Only release an identified rejection, and only if it is still the same record.
+            cleared = db.eval("if redis.call('HGET',KEYS[1],ARGV[1]) == ARGV[2] then "
+                              "return redis.call('HDEL',KEYS[1],ARGV[1]) end return 0", 1, LEDGER, key, existing)
+            if not cleared:
+                raise RuntimeError("Upload reservation changed")
+            existing = None
         if existing:
             if existing.startswith("{") and json.loads(existing).get("youtube"):
                 print("Already uploaded:", json.loads(existing)["youtube"], flush=True)
@@ -118,7 +143,15 @@ def publish_all(root, backup):
         if path.name in music:
             clip.update(title=title + " #GTA5", music_credit=music[path.name], description_intro=PROMPTS[i],
                         campaign={"extra_tags": ["LosSantos", "GTA6", "ViceCity"]})
-        receipt = delivery.youtube(path, clip, "Grand Theft Auto V", with_receipt=True)
+        from googleapiclient.errors import HttpError
+        try:
+            receipt = delivery.youtube(path, clip, "Grand Theft Auto V", with_receipt=True)
+        except HttpError as error:
+            reasons = [row.get("reason") for row in (error.error_details or []) if isinstance(row, dict)]
+            if key == FINAL_REMIX and error.resp.status == 400 and "uploadLimitExceeded" in reasons:
+                next_attempt = int(datetime.now(timezone.utc).timestamp()) + 86400
+                db.hset(LEDGER, key, f"upload-limit:{next_attempt}")
+            raise
         ident = receipt["id"]
         visibility = receipt["status"]["privacyStatus"]
         channel = receipt["snippet"]["channelId"]
@@ -132,11 +165,18 @@ def publish_all(root, backup):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["prepare", "publish", "capacity"])
+    parser.add_argument("mode", choices=["prepare", "publish", "capacity", "check-retry"])
     parser.add_argument("root", type=Path)
     parser.add_argument("--backup", choices=["r2", "verified-artifact"], default="r2")
     args = parser.parse_args()
-    if args.mode == "prepare":
+    if args.mode == "check-retry":
+        record = store().hget(LEDGER, FINAL_REMIX)
+        due = retry_due(record, datetime.now(timezone.utc))
+        print("Final music repost:", "retry due" if due else
+              "waiting for the upload window" if record == REJECTED_RESERVATION or (record or "").startswith("upload-limit:") else "no retry due")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            print("due=" + str(due).lower(), file=out)
+    elif args.mode == "prepare":
         render_all(args.root.resolve())
     elif args.mode == "capacity":
         db = store()

@@ -24,6 +24,8 @@ jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.check_media && 10 || 4 }}
+    outputs:
+      retry_due: ${{ steps.remix.outputs.due }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +34,11 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install 'redis>=5,<8'
+      - name: Check the final music repost after the channel upload limit
+        id: remix
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: python scripts/gta5_batch.py check-retry "$RUNNER_TEMP"
       - name: Snapshot public view counts and rank fresh GTA clips
         env:
           REDIS_URL: ${{ secrets.REDIS_URL }}
@@ -55,3 +62,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ github.token }}
         run: python monitoring.py
+
+  retry-final-remix:
+    needs: report
+    if: ${{ !cancelled() && needs.report.outputs.retry_due == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Retry the verified archive after YouTube's upload limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run five-shorts.yml --repo "$GITHUB_REPOSITORY" --ref main -f mode=publish-with-temporary-backup -f prepare_run=43274022813
