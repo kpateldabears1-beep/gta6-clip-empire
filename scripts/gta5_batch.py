@@ -1,8 +1,9 @@
-"""One manually dispatched, deduplicated set of five narrated GTA V Shorts."""
+"""One manually dispatched, deduplicated set of five music-backed GTA V Shorts."""
 import argparse
 import hashlib
 import json
 import os
+import random
 from pathlib import Path
 import subprocess
 import sys
@@ -10,23 +11,24 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_archive import file_digest, storage, upload_video
 from main import daily_cap, day_key, LEDGER, reserve, store
+from soundtrack import TRACKS, music_mix
 from render import probe, render_vertical_short, seconds
 
 ITEM = "https://archive.org/details/ut-gtav-b-roll"
 SOURCE = "https://archive.org/download/ut-gtav-b-roll/"
 CREDIT = "Unlisted Thoughts"
-# Number, start, original recording SHA-1 (archive metadata), title, hook, voiceover.
+# Number, start, original recording SHA-1 (archive metadata), title, hook, on-screen commentary.
 EDITS = [
     (2, 16, "5f42a8eae20decd7befee814333f7f53932de731", "Someone Brought a Boat to the GTA V Freeway Ramp", "Who Brought the Boat?",
-     "Look at what the pickup is towing. Someone brought a speedboat to a freeway jump. The truck gets to pick its line, but the boat is stuck following that little hitch. Forget watching the front bumper. The interesting part of this stunt is the last thing to reach the ramp."),
+     ('Start at the hitch', 'The boat follows the pickup', 'Watch the back wheels')),
     (3, 18, "3991f83900c9a3312439935e3c37a8229bc1feac", "The Strangest Spectators at a GTA V Stunt", "Watch the Sideline Instead",
-     "Ignore the ramp for a second. Look along the dirt shoulder. There are people standing in a row, vehicles parked behind them, and watchtowers in the distance. From this angle the freeway looks like a grandstand. Now look back at the traffic. Would you stand that close?"),
+     ('Look past the cars', 'Spot the roadside crowd', 'Would you stand there?')),
     (4, 16, "1015b94849b44faad4a0e5e7f01c31d12c9b5385", "Watch the Trailer, Not the Cab | GTA V", "Watch the Trailer Swing",
-     "Here's the part I'd replay: the angle between the cab and its trailer. The cab only takes up one lane, but turn that trailer sideways and it stretches across the road. Watch the white lane markings underneath it. They're a better ruler than the other cars."),
+     ('Follow the cab', 'Watch the trailer swing', 'Count the lanes it spans')),
     (5, 17, "4ee1ec68f7ba77d49461a69ec1ea37736f8bc4d7", "Spot the Safe Landing in This GTA V Scrapyard", "Pick Your Landing Spot",
-     "Imagine you have to land in this scrapyard. Pick a spot before you look any closer. That empty patch by the roof? There's a row of metal beams beside it. The open dirt in the middle looks better. This is why I like the overhead shot: you can play it like a puzzle."),
+     ('Pick a landing spot', 'Look for the metal beams', 'Try the open dirt')),
     (6, 16, "1083adc5c4d962159563f0fed4b1aa09e1d4bf9c", "Three Levels of Los Santos in One Shot | GTA V", "Count the Three Levels",
-     "How many levels can you find in this one shot? Start with the road on the left. Drop down to the freight cars under the yellow crane. Then look past the tracks, toward the water in the concrete channel. A freeway, a rail yard, and a river, all in the same frame."),
+     ('Start on the freeway', 'Drop to the freight cars', 'Find the concrete channel')),
 ]
 
 
@@ -39,7 +41,6 @@ def token(i):
 
 
 def render_all(root):
-    from faster_whisper import WhisperModel
     from tempfile import TemporaryDirectory
     import requests
     root.mkdir(parents=True, exist_ok=True)
@@ -47,9 +48,9 @@ def render_all(root):
     meta.raise_for_status()
     if meta.json()["metadata"]["licenseurl"].replace("http:", "https:") != "https://creativecommons.org/publicdomain/zero/1.0/":
         raise RuntimeError("Source recording license changed")
-    model = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=2)
-    manifest = {}
-    for i, start, checksum, title, hook, script in EDITS:
+    manifest, credits = {}, {}
+    tracks = random.sample(TRACKS, len(EDITS))
+    for (i, start, checksum, title, hook, captions), track in zip(EDITS, tracks):
         with TemporaryDirectory(dir=root.parent) as temp:
             d = Path(temp)
             raw = d / "source.mp4"
@@ -57,20 +58,11 @@ def render_all(root):
             with raw.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha1").hexdigest() != checksum:
                     raise ValueError("Source checksum mismatch")
-            (d/"words.txt").write_text(script)
-            # Only this authored narration is mapped into the Short. No source soundtrack.
-            run("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "flite=textfile=words.txt:voice=slt", "voice.wav", cwd=d)
-            duration = max(18.25, seconds(d/"voice.wav") + 0.45)
-            if duration >= 43.8:
-                raise ValueError("Narration too long")
-            segments, _ = model.transcribe(str(d/"voice.wav"), language="en", word_timestamps=True, beam_size=3)
-            words = [(w.start, w.end, w.word.strip()) for s in segments for w in s.words if w.end > w.start]
-            if len(words) < max(4, len(script.split()) * .7) or max(b[0]-a[1] for a,b in zip(words,words[1:])) > 4:
-                raise ValueError("Incomplete spoken commentary")
-            run("ffmpeg", "-v", "error", "-ss", start, "-i", raw, "-i", d/"voice.wav", "-map", "0:v:0", "-map", "1:a:0",
-                "-t", f"{duration:.3f}", "-af", "apad", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-c:a", "aac", d/"narrated.mp4")
+            duration = 21
+            notes = [{"start": j*7, "end": (j+1)*7, "text": line} for j, line in enumerate(captions)]
             dest = d / f"gta5-{i}.mp4"
-            render_vertical_short(d/"narrated.mp4", dest, duration, words, title, CREDIT, hook=hook)
+            render_vertical_short(raw, dest, duration, [], title, CREDIT, notes=notes, start=start, hook=hook, gap="")
+            credits[dest.name] = music_mix(dest, track)
             info = probe(dest)
             v = next(s for s in info["streams"] if s["codec_type"] == "video")
             a = next(s for s in info["streams"] if s["codec_type"] == "audio")
@@ -79,7 +71,8 @@ def render_all(root):
             run("ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", dest, "-f", "null", "-")
             dest.replace(root / dest.name)
             manifest[dest.name] = file_digest(root/dest.name)
-            print(f"PASS: {title} | {duration:.1f}s | {len(words)} timed spoken words", flush=True)
+            print(f"PASS: {title} | {duration:.1f}s | {credits[dest.name]}", flush=True)
+    (root/"music.json").write_text(json.dumps(credits, indent=2))
     (root/"manifest.json").write_text(json.dumps(manifest, indent=2))
 
 
@@ -90,6 +83,7 @@ def publish_all(root, backup):
     paths = [root/f"gta5-{e[0]}.mp4" for e in EDITS]
     if set(manifest) != {p.name for p in paths} or any(file_digest(p) != manifest[p.name] for p in paths):
         raise ValueError("Artifact does not contain the five verified renders")
+    music = json.loads((root/"music.json").read_text()) if (root/"music.json").exists() else {}
     if backup == "r2":
         client, bucket = storage()
         for path in paths:
@@ -111,6 +105,8 @@ def publish_all(root, backup):
         if not reserve(db, [key], run_id):
             raise RuntimeError("Daily cap reached; remaining Shorts are still in the artifact")
         clip = {"title": title, "broadcaster_name": CREDIT + " (CC0 recording). Commentary and edit: Daily Getaway Clips.", "url": ITEM}
+        if path.name in music:
+            clip["broadcaster_name"] += "\nMusic: " + music[path.name]
         receipt = delivery.youtube(path, clip, "Grand Theft Auto V", with_receipt=True)
         ident = receipt["id"]
         visibility = receipt["status"]["privacyStatus"]

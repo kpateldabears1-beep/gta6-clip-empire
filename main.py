@@ -16,6 +16,7 @@ from uuid import uuid4
 from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
 from render import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
 import delivery
+from soundtrack import music_mix
 import bounties
 import cloud_archive
 from monitoring import DiagnosticError, error_trace, notify_post
@@ -390,6 +391,7 @@ def prepare(root):
     cut(short, short_file.name, short["duration"])
     if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
         raise RuntimeError("Rendered Short must be at least 18 and under 44 seconds")
+    short["music_credit"] = music_mix(short_file)
     short_file.replace(root / "youtube.mp4")
     if group:
         parts = []
@@ -401,6 +403,9 @@ def prepare(root):
         join(parts, compilation_file)
         if not 62 < seconds(compilation_file) < 66:
             raise RuntimeError("Rendered compilation outside target length")
+        music_credit = music_mix(compilation_file)
+        for clip in group:
+            clip["compilation_music_credit"] = music_credit
         compilation_file.replace(root / "tiktok.mp4")
     else:
         print("Insufficient distinct footage for TikTok; keeping the YouTube Short.")

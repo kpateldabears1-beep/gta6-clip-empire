@@ -122,6 +122,7 @@ class DiscoveryTests(unittest.TestCase):
                 "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {"campaign_watermark": "CODE1"}, "duration": 30}
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root = Path(tmp)
+            stack.enter_context(patch.object(main, "music_mix", return_value="test track"))
             dl = Mock()
             dl.prepare_filename.return_value = str(root / "src0.mp4")
             dl.extract_info.return_value = {"id": "clip_abc"}

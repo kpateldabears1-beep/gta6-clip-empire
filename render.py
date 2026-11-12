@@ -129,14 +129,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
 
 def render_vertical_short(source, out, length, words, title, credit, notes=(), facecam=None, start=0, hook=None,
-                          platform=None, campaign=None):
+                          platform=None, campaign=None, gap=None):
     if not isfinite(length) or length <= 0:
         raise ValueError("Invalid segment duration")
     length = min(length, MAX_SEGMENT_SECONDS)
     ass = out.with_suffix(".ass")
     audio = any(s["codec_type"] == "audio" for s in probe(source)["streams"])
     subtitles(ass, words, length, curiosity_hook(title, hook), credit, notes, platform=platform,
-              campaign=campaign, gap="[Gameplay footage]" if audio else "[Silent footage]")
+              campaign=campaign, gap=gap if gap is not None else ("[Gameplay footage]" if audio else "[Silent footage]"))
     # Brief center punch-in on each cut, then settle back to uncropped gameplay.
     vf = ("[0:v]fps=30,setsar=1,split[back][front];"
           "[back]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,"

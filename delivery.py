@@ -24,6 +24,8 @@ def youtube(path, clip, game, *, with_receipt=False):
                         "description": f'{game}\nCredit: {clip["broadcaster_name"]}\n{clip["url"]}\n'
                                        + " ".join("#" + t for t in tags)},
             "status": {"privacyStatus": "public"}}
+    if clip.get("music_credit"):
+        body["snippet"]["description"] += "\nMusic: " + clip["music_credit"]
     request = client.videos().insert(
         part="snippet,status", body=body, notifySubscribers=False,
         media_body=MediaFileUpload(str(path), mimetype="video/mp4", chunksize=8*1024**2, resumable=True))
