@@ -27,6 +27,7 @@ CANDIDATES = [
     ("MistyWanderingDragonDoubleRainbow","DougDoug's idea of normal GTA V gameplay","A normal GTA day?"),
     ("MistyFunCheddarHeyGuys-_A22SSNeY66PeIhb","DougDoug's GTA chat says hello to YouTube","Chat meets YouTube"),
     ("CourageousConcernedMinkBCouch-K0fu35KJZEUCKvok","A wholesome DougDoug moment in GTA V","A moment for chat"),
+    ("TentativeWittyHorseradishBrainSlug-A1QLCCO8LzCOe2a8","DougDoug's GTA birthday shoutout for Shiro","Chat has a surprise"),
 ]
 
 def digest(p):
@@ -64,23 +65,41 @@ def prepare(out):
                 continue
             duration = float(probe(src)["format"]["duration"])
             length = min(38.,duration-.08)
-            if length < 18:
+            replay = slug == "SmallBoldDurianTheRinger-_MeygnyoOJFdxmLf" and 14 <= length < 18
+            if length < 18 and not replay:
                 print("Too short:", slug,duration,flush=True)
                 continue
             # Preserve the payoff at the end of the fan-clipped moment.
             start = max(0.,duration-length-.08)
-            samples = decode_audio(src,length,start=start)
-            segments,_ = model.transcribe(samples, word_timestamps=True, vad_filter=True, beam_size=1)
-            words,cues = [],[]
-            for seg in segments:
-                if MUSIC_CUE.search(seg.text): cues.append((seg.start,seg.end))
-                else: words.extend((w.start,w.end,w.word.strip()) for w in seg.words or [] if valid_word((w.start,w.end,w.word)))
-            if len(words)<4 or screen.flagged_span(samples,words,cues):
+            for start,length in [(start,length)] + ([(0,18.5)] if duration >= 20 else []):
+                samples = decode_audio(src,length,start=start)
+                segments,_ = model.transcribe(samples, word_timestamps=True, vad_filter=True, beam_size=1)
+                words,cues = [],[]
+                for seg in segments:
+                    if MUSIC_CUE.search(seg.text): cues.append((seg.start,seg.end))
+                    else: words.extend((w.start,w.end,w.word.strip()) for w in seg.words or [] if valid_word((w.start,w.end,w.word)))
+                if len(words)>=4 and not screen.flagged_span(samples,words,cues):
+                    break
+            else:
                 print("Skipped: speech/music check",slug,flush=True)
                 continue
             n = len(batch)+1
             raw = root/"cut.mp4"
-            render_vertical_short(src,raw,length,[],title,"DougDoug",start=start,hook=hook,platform="Twitch")
+            notes = []
+            if replay:
+                # Replay the last three seconds at 0.75x, with a closer view and no repeated dialogue.
+                edited = root/"replay.mp4"
+                graph = (f"[0:v]trim=end={length},setpts=PTS-STARTPTS[v];[0:a]atrim=end={length},asetpts=PTS-STARTPTS[a];"
+                         f"[0:v]trim=start={length-3}:end={length},setpts=(PTS-STARTPTS)/0.75,"
+                         "zoompan=z=1.18:x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=1280x720:fps=30[r];"
+                         "[v]scale=1280:720,setsar=1[v0];[r]setsar=1[r0];anullsrc=r=44100:cl=stereo,atrim=duration=4[s];"
+                         "[v0][a][r0][s]concat=n=2:v=1:a=1[vid][aud]")
+                graph = graph.replace(",zoompan=",",fps=30,zoompan=")
+                subprocess.run(["ffmpeg","-v","error","-i",str(src),"-filter_complex",graph,"-map","[vid]","-map","[aud]",
+                                "-t",str(length+4),"-r","30","-c:v","libx264","-preset","ultrafast",str(edited)],check=True)
+                notes=[dict(start=length,end=length+4,text="Replay · 0.75×")]
+                src,start,length=edited,0,length+4
+            render_vertical_short(src,raw,length,[],title,"DougDoug",notes=notes,start=start,hook=hook,platform="Twitch")
             final = out/f"slot{n}.mp4"
             subprocess.run(["ffmpeg","-v","error","-i",str(raw),"-c:v","copy","-af","loudnorm=I=-16:TP=-2:LRA=9",
                             "-ar","44100","-c:a","aac","-b:a","160k","-movflags","+faststart",str(final)],check=True)
