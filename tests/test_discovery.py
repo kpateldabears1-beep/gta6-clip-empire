@@ -52,7 +52,7 @@ class DiscoveryTests(unittest.TestCase):
             self.assertNotIn("bad", data)
             subtitles(path, None, 3, "What happens next?", "Streamer")
 
-    def test_silent_kick_clip_reaches_the_renderer(self):
+    def test_music_candidate_is_skipped_before_a_silent_kick_clip_is_rendered(self):
         clip = {"id": "kick:clip_abc", "platform": "kick", "broadcaster_id": "kick:lacy",
                 "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {}, "duration": 30}
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
@@ -62,22 +62,32 @@ class DiscoveryTests(unittest.TestCase):
             dl.extract_info.return_value = {"id": "clip_abc"}
             downloader = unittest.mock.MagicMock()
             downloader.return_value.__enter__.return_value = dl
-            whisper = Mock(side_effect=AssertionError("silent clips do not need Whisper"))
+            whisper = Mock()
+            whisper.return_value.transcribe.return_value = ([SimpleNamespace(start=0, end=10, text="[singing]",
+                words=[SimpleNamespace(start=0, end=1, word="example")])], None)
             stack.enter_context(patch.dict(sys.modules, {
                 "yt_dlp": SimpleNamespace(YoutubeDL=downloader),
                 "yt_dlp.utils": SimpleNamespace(DownloadError=OSError),
                 "faster_whisper": SimpleNamespace(WhisperModel=whisper)}))
             stack.enter_context(patch.dict(os.environ, {"ALLOWED_KICK_CHANNELS": "lacy", "DELIVERY_MODE": "preview"}))
             stack.enter_context(patch.object(main, "store"))
-            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [clip])))
-            stack.enter_context(patch.object(main, "probe", return_value={
-                "streams": [{"codec_type": "video", "duration": "30"}]}))
+            flagged = dict(clip, id="kick:clip_music")
+            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [flagged, clip])))
+            stack.enter_context(patch.object(main, "decode_audio", return_value=[0]))
+            stack.enter_context(patch.object(main, "audio_activity", return_value=(0, True)))
+            screen = stack.enter_context(patch.object(main, "MusicScreen"))
+            screen.return_value.flagged_span.return_value = (0, 8.16)
+            video = {"codec_type": "video", "duration": "30"}
+            stack.enter_context(patch.object(main, "probe", side_effect=[
+                {"streams": [video, {"codec_type": "audio"}]}, {"streams": [video]}]))
             stack.enter_context(patch.object(main, "seconds", return_value=30))
             render = stack.enter_context(patch.object(main, "render_vertical_short"))
             render.side_effect = lambda source, output, *args, **kwargs: output.touch()
             main.prepare(root)
-            dl.extract_info.assert_called_once_with("https://kick.com/lacy/clips/clip_abc", download=True)
-            whisper.assert_not_called()
+            render.assert_called_once()
+            dl.extract_info.assert_called_with("https://kick.com/lacy/clips/clip_abc", download=True)
+            whisper.return_value.transcribe.assert_called_once()
+            screen.return_value.flagged_span.assert_called_once_with([0], [(0, 1, "example")], [(0, 10)])
             self.assertEqual(render.call_args.kwargs["platform"], "Kick")
             self.assertEqual(render.call_args.args[5], "lacy")
             self.assertEqual(render.call_args.args[2:5], (30, [], "Ramp jump"))

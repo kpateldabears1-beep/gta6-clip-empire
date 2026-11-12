@@ -101,14 +101,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     words = [item for item in words if valid_word(item)] if isinstance(words, (tuple, list)) else []
     words = sorted((max(0, s), min(length, e), w) for s, e, w in words if s < length and e > 0)
     pos = r"{\pos(540,1070)}"
-    cursor = 0
+    cursor, previous_pair = 0, None
     for i, (start, end, _) in enumerate(words):
         start = max(start, cursor)
         if end <= start:
             continue
-        add(cursor, start, "Caption", pos + gap)
+        # Hold the pair between adjacent words to avoid flashing a cue on tiny pauses.
+        pause_text = previous_pair if previous_pair and start - cursor <= .35 else gap
+        add(cursor, start, "Caption", pos + pause_text)
         # Reuse the preceding word for an odd final word rather than inventing a partner.
         pair = min(i // 2 * 2, max(0, len(words) - 2))
+        previous_pair = " ".join(safe(w) for _, _, w in words[pair:pair+2])
         phrase = " ".join((r"{\1c&H00E7FF&\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" if j == i
                            else r"{\1c&HFFFFFF&\fscx100\fscy100}") + safe(w)
                           for j, (_, _, w) in enumerate(words[pair:pair+2], pair))

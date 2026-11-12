@@ -58,4 +58,5 @@ class AudioScreenTests(unittest.TestCase):
                         if MUSIC_CUE.search(segment.text):
                             cues.append((segment.start, segment.end))
                     span = screen.flagged_span(samples, words, cues)
+                    print(f"Audio screen fixture {name}: {span or 'kept'}")
                     self.assertEqual(bool(span), expected, f"classifier result for {name}: {span}")

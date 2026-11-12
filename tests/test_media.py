@@ -18,6 +18,11 @@ class MediaTests(unittest.TestCase):
             render(source, out, 45, [], "The getaway", "TestChannel", platform="Twitch")
             self.assertTrue(43.8 < seconds(out) < 44)
             self.assertIn("Clip: @TestChannel on Twitch", out.with_suffix(".ass").read_text())
+            for moment in ("0.2", "43.7"):
+                # The source is plain blue: bright neutral pixels here are burned-in watermark text.
+                pixels = subprocess.check_output(["ffmpeg", "-v", "error", "-ss", moment, "-i", str(out),
+                    "-vf", "crop=900:150:40:1660,format=gray", "-frames:v", "1", "-f", "rawvideo", "-"])
+                self.assertGreater(sum(p > 210 for p in pixels), 1000)
 
     def test_render_and_join_with_speech_timing_and_a_silent_source(self):
         with tempfile.TemporaryDirectory() as d:
