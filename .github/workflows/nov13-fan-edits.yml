@@ -1,0 +1,74 @@
+name: November 13 unofficial GTA fan edits
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 8,11,14,17,20 13 11 *'
+      timezone: America/Chicago
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: |
+          if ! command -v ffmpeg; then sudo apt-get update -qq && sudo apt-get install -y ffmpeg; fi
+          python -m pip install -q -r requirements.txt
+          python -u scripts/nov13_fan_edits.py prepare "$RUNNER_TEMP/edits"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nov13-verified-fan-edits
+          path: ${{ runner.temp }}/edits/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: nov13-verified-fan-edits
+          path: ${{ runner.temp }}/verify/
+      - name: Verify five recovered videos against their original hashes
+        run: |
+          cd "$RUNNER_TEMP/verify"
+          jq -e 'length == 5' manifest.json
+          jq -r 'to_entries[] | "\(.value.sha256)  slot\(.key+1).mp4"' manifest.json | sha256sum -c -
+  post:
+    if: github.event_name == 'schedule' && vars.NOV13_VERIFIED_RUN != '' && vars.ENABLE_SCHEDULE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - id: date
+        run: |
+          if [ "$(TZ=America/Chicago date +%F)" = '2026-11-13' ]; then echo 'due=true' >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.date.outputs.due == 'true'
+        with: {persist-credentials: false}
+      - name: Check pinned preparation run
+        if: steps.date.outputs.due == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREP: ${{ vars.NOV13_VERIFIED_RUN }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREP" | jq -e '.conclusion=="success" and .path==".github/workflows/nov13-fan-edits.yml" and .head_branch=="main" and .event=="workflow_dispatch"'
+      - uses: actions/download-artifact@v4
+        if: steps.date.outputs.due == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.NOV13_VERIFIED_RUN }}
+          name: nov13-verified-fan-edits
+          path: ${{ runner.temp }}/edits/
+      - if: steps.date.outputs.due == 'true'
+        env:
+          DAILY_POST_CAP: '5'
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          python -m pip install -q 'redis>=5,<8' google-api-python-client google-auth-httplib2
+          python scripts/nov13_fan_edits.py deliver "$RUNNER_TEMP/edits"
