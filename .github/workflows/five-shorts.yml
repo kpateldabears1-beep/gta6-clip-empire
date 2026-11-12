@@ -1,0 +1,90 @@
+name: Five original GTA V Shorts
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Prepare five shorts, or publish the reviewed artifact
+        type: choice
+        options: [prepare, publish-r2, publish-with-temporary-backup]
+        default: prepare
+      prepare_run:
+        description: Successful preparation run ID (publish only)
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: five-narrated-shorts
+  cancel-in-progress: false
+jobs:
+  batch:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DAILY_POST_CAP: ${{ vars.DAILY_POST_CAP }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install batch dependencies
+        run: python -m pip install -q 'redis>=5,<8' requests
+      - name: Check remaining daily slots
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: python scripts/gta5_batch.py capacity "$RUNNER_TEMP"
+      - name: Render five narrated Shorts
+        if: inputs.mode == 'prepare'
+        env:
+          HF_HUB_DISABLE_XET: '1'
+          PYTHONUNBUFFERED: '1'
+        run: |
+          if ! command -v ffmpeg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y ffmpeg; fi
+          python -m pip install -q 'faster-whisper>=1.1,<2'
+          python scripts/gta5_batch.py prepare "$RUNNER_TEMP/five-shorts"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'prepare'
+        with:
+          name: five-narrated-shorts
+          path: ${{ runner.temp }}/five-shorts/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Verify provenance of reviewed artifact
+        if: inputs.mode != 'prepare'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREPARE_RUN: ${{ inputs.prepare_run }}
+        run: |
+          [[ "$PREPARE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN" | jq -e --arg sha "$GITHUB_SHA" '.event == "workflow_dispatch" and .path == ".github/workflows/five-shorts.yml" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success"'
+      - uses: actions/download-artifact@v4
+        if: inputs.mode != 'prepare'
+        with:
+          name: five-narrated-shorts
+          run-id: ${{ inputs.prepare_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/five-shorts
+      - name: Publish reviewed Shorts to YouTube
+        if: inputs.mode != 'prepare'
+        env:
+          MODE: ${{ inputs.mode }}
+          YOUTUBE_CHANNEL_ID: ${{ vars.YOUTUBE_CHANNEL_ID }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python -m pip install -q 'google-api-python-client>=2.150,<3' 'google-auth-httplib2>=0.2,<1' 'boto3>=1.36,<2'
+          backup=r2
+          if [ "$MODE" = publish-with-temporary-backup ]; then backup=verified-artifact; fi
+          python scripts/gta5_batch.py publish "$RUNNER_TEMP/five-shorts" --backup "$backup"
