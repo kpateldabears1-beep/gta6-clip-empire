@@ -18,7 +18,8 @@ class CaptionTests(unittest.TestCase):
                 subtitles(ass, [(1, 2, "look"), (2, 3, "here"), (4, 5, "now")], 6, "Who did that?",
                           "@Example", platform=platform, campaign="Creator event")
                 data = ass.read_text()
-                self.assertIn(f"0:00:00.00,0:00:06.00,Credit,,0,0,0,,Clip: @Example on {platform}", data)
+                self.assertEqual([line for line in data.splitlines() if ",Credit,," in line],
+                                 ["Dialogue: 0,0:00:00.00,0:00:06.00,Credit,,0,0,0,,Clip: @Example Creator event"])
                 self.assertIn("0:00:00.00,0:00:06.00,Hook,", data)
                 rows = [line.split(",", 9) for line in data.splitlines() if ",Caption,," in line]
                 self.assertEqual(rows[0][1], "0:00:00.00")

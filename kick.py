@@ -41,15 +41,20 @@ def kick_media_url(value, slug):
 def fetch_kick_clips(usernames=None, *, now=None):
     """Return distinct public clips from the past three hours, fastest-growing first."""
     if usernames is None:
-        usernames = json.loads(Path(__file__).with_name("streamers.json").read_text())["kick_watchlist"]
+        config = json.loads(Path(__file__).with_name("streamers.json").read_text())
+        usernames = ([creator["username"] for creator in config["watchlist"] if creator.get("username")]
+                     if "watchlist" in config else config.get("kick_watchlist", []))
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=3)
     found = {}
     failures = []
+    if isinstance(usernames, str):
+        usernames = [usernames]
+    usernames = list(usernames)
+    if any(not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_-]+", name) for name in usernames):
+        raise ValueError("Invalid Kick channel slug")
     usernames = list(dict.fromkeys(usernames))
     for username in usernames:
-        if not isinstance(username, str) or not re.fullmatch(r"[a-z0-9_-]+", username):
-            raise ValueError("Invalid Kick channel slug")
         params = {"sort": "date", "time": "day"}
         cursors = set()
         try:

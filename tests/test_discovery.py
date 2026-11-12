@@ -52,9 +52,63 @@ class DiscoveryTests(unittest.TestCase):
             self.assertNotIn("bad", data)
             subtitles(path, None, 3, "What happens next?", "Streamer")
 
+    def test_campaign_follows_allowed_channel_through_discovery_and_old_queue(self):
+        config = {"lookback_hours": 3, "priority_streamers": [], "watchlist": [
+            {"broadcaster_id": "123", "username": "licensed", "campaign_watermark": "EVENT-42"},
+            {"broadcaster_id": "456", "username": "other", "campaign_watermark": "OTHER"}]}
+        with patch.object(Path, "read_text", return_value=json.dumps(config)), patch.dict(os.environ, {
+                "ALLOWED_BROADCASTER_IDS": "123", "ALLOWED_KICK_CHANNELS": "Licensed"}):
+            channels, _ = main.sources_config()
+        self.assertEqual(set(channels), {"123", "kick:licensed"})
+        self.assertEqual(channels["123"]["campaign_watermark"], "EVENT-42")
+        clip = {"id": "kick:k1", "broadcaster_id": "kick:licensed", "game_id": main.V, "title": "A close finish",
+                "view_count": 10, "duration": 30, "platform": "kick", "created_at": datetime.now(timezone.utc).isoformat()}
+        twitch = dict(clip, id="t1", broadcaster_id="123", platform="twitch", campaign=channels["123"])
+        db = Mock()
+        db.hmget.side_effect = lambda _, keys: [None] * len(keys)
+        with patch.object(main, "fetch_kick_clips", return_value=[clip]), patch.object(main, "twitch_clips",
+                return_value=({main.V: "42"}, {"t1": twitch})):
+            game, clips = main.discover(db, channels, config)
+        self.assertEqual({c["id"] for c in clips}, {"t1", "kick:k1"})
+        self.assertTrue(all(c["campaign"]["campaign_watermark"] == "EVENT-42" for c in clips))
+        db.lrange.return_value = [json.dumps([game, dict(clip, campaign=None)]),
+                                  json.dumps([game, dict(clip, duration=[])])]
+        _, queued = main.queued(db, channels, config)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["campaign"]["campaign_watermark"], "EVENT-42")
+
+    def test_roster_reads_kick_handles_once_and_excludes_twitch_only_creators(self):
+        with patch.object(kick, "clip_page", return_value={"clips": []}) as page:
+            self.assertEqual(kick.fetch_kick_clips(), [])
+            self.assertCountEqual([call.args[0] for call in page.call_args_list], ["lacy", "adinross", "n3on"])
+
+    def test_helix_ignores_bad_rows_and_empty_pagination(self):
+        http = Mock()
+        http.post.return_value.json.return_value = {"access_token": "test-token"}
+        http.get.return_value.json.side_effect = [
+            {"data": [None, {"id": "42", "name": main.V}]},
+            {"data": [{"id": [], "login": "bad"}, {"id": "123", "login": "licensed"}]},
+            {"data": [None, {"id": "x", "broadcaster_id": "123", "game_id": "42"}], "pagination": None}]
+        with patch.dict(sys.modules, {"requests": http}), patch.dict(os.environ, {
+                "TWITCH_CLIENT_ID": "test", "TWITCH_CLIENT_SECRET": "test"}):
+            games, clips = main.twitch_clips({"123": {}}, {"target_game_names": [main.V], "lookback_hours": 3},
+                                             datetime.now(timezone.utc))
+        self.assertEqual(games, {main.V: "42"})
+        self.assertEqual(clips["x"]["broadcaster_login"], "licensed")
+
+    def test_kick_still_runs_when_twitch_is_unavailable(self):
+        with patch.object(main, "twitch_clips", side_effect=OSError("offline")), patch.object(
+                main, "fetch_kick_clips", return_value=[]) as kick_fetch:
+            channels = {"123": {}, "kick:lacy": {}}
+            self.assertEqual(main.discover(Mock(), channels, {}), (main.VI, []))
+            self.assertEqual(kick_fetch.call_args.args, (["lacy"],))
+            kick_fetch.side_effect = RuntimeError("Kick unavailable")
+            with self.assertRaises(RuntimeError):
+                main.discover(Mock(), channels, {})
+
     def test_music_candidate_is_skipped_before_a_silent_kick_clip_is_rendered(self):
         clip = {"id": "kick:clip_abc", "platform": "kick", "broadcaster_id": "kick:lacy",
-                "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {}, "duration": 30}
+                "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {"campaign_watermark": "CODE1"}, "duration": 30}
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root = Path(tmp)
             dl = Mock()
@@ -72,25 +126,29 @@ class DiscoveryTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {"ALLOWED_KICK_CHANNELS": "lacy", "DELIVERY_MODE": "preview"}))
             stack.enter_context(patch.object(main, "store"))
             flagged = dict(clip, id="kick:clip_music")
-            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [flagged, clip])))
+            second = dict(clip, id="kick:clip_two", broadcaster_id="kick:n3on", duration=34,
+                          campaign={"campaign_watermark": "CODE2"})
+            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [flagged, clip, second])))
             stack.enter_context(patch.object(main, "decode_audio", return_value=[0]))
             stack.enter_context(patch.object(main, "audio_activity", return_value=(0, True)))
             screen = stack.enter_context(patch.object(main, "MusicScreen"))
             screen.return_value.flagged_span.return_value = (0, 8.16)
             video = {"codec_type": "video", "duration": "30"}
             stack.enter_context(patch.object(main, "probe", side_effect=[
-                {"streams": [video, {"codec_type": "audio"}]}, {"streams": [video]}]))
-            stack.enter_context(patch.object(main, "seconds", return_value=30))
+                {"streams": [video, {"codec_type": "audio"}]}, {"streams": [video]},
+                {"streams": [dict(video, duration="34")]}]))
+            stack.enter_context(patch.object(main, "seconds", side_effect=[30, 64]))
             render = stack.enter_context(patch.object(main, "render_vertical_short"))
             render.side_effect = lambda source, output, *args, **kwargs: output.touch()
+            stack.enter_context(patch.object(main, "join", side_effect=lambda parts, output: output.touch()))
             main.prepare(root)
-            render.assert_called_once()
-            dl.extract_info.assert_called_with("https://kick.com/lacy/clips/clip_abc", download=True)
+            self.assertEqual([call.kwargs["campaign"] for call in render.call_args_list], ["CODE1", "CODE1", "CODE2"])
+            dl.extract_info.assert_any_call("https://kick.com/lacy/clips/clip_abc", download=True)
             whisper.return_value.transcribe.assert_called_once()
             screen.return_value.flagged_span.assert_called_once_with([0], [(0, 1, "example")], [(0, 10)])
             self.assertEqual(render.call_args.kwargs["platform"], "Kick")
-            self.assertEqual(render.call_args.args[5], "lacy")
-            self.assertEqual(render.call_args.args[2:5], (30, [], "Ramp jump"))
+            self.assertEqual([call.args[5] for call in render.call_args_list], ["lacy", "lacy", "n3on"])
+            self.assertEqual(render.call_args_list[0].args[2:5], (30, [], "Ramp jump"))
             self.assertEqual(json.loads((root / "batch.json").read_text())["short"]["id"], "kick:clip_abc")
 
     def test_invalid_delivery_batch_fails_before_reserving(self):
@@ -105,5 +163,7 @@ class DiscoveryTests(unittest.TestCase):
     def test_hooks_are_short_and_title_specific(self):
         self.assertNotEqual(curiosity_hook("Police chase"), curiosity_hook("A huge jump"))
         self.assertEqual(curiosity_hook("Who did that?"), "WHO DID THAT?")
+        self.assertEqual(curiosity_hook("Police chase", "DID THEY ESCAPE?"), "DID THEY ESCAPE?")
+        self.assertEqual(curiosity_hook("Police chase", "one two three four five six"), curiosity_hook("Police chase"))
         for title in ("GTA | Twitch | a totally random title", "", "chat reacts", "Drift", None):
             self.assertIn(len(curiosity_hook(title).split()), (3, 4, 5))

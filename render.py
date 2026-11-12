@@ -47,7 +47,12 @@ def valid_word(item):
             and end > start)
 
 
-def curiosity_hook(title):
+def curiosity_hook(title, override=None):
+    if isinstance(override, str):
+        cleaned = safe(override)
+        if len(cleaned) <= 68 and 3 <= len(cleaned.split()) <= 5 and all(
+                any(c.isalnum() for c in word) for word in cleaned.split()):
+            return cleaned
     tokens = re.findall(r"[A-Za-z0-9']+", title.casefold() if isinstance(title, str) else "")
     themes = (
         ({"chase", "cops", "police", "getaway", "escape"}, "CAN THEY GET AWAY?"),
@@ -61,7 +66,7 @@ def curiosity_hook(title):
     for keywords, hook in themes:
         if keywords.intersection(tokens):
             return hook
-    if isinstance(title, str) and title.strip().endswith("?") and 3 <= len(tokens) <= 5:
+    if isinstance(title, str) and len(title.strip()) <= 68 and title.strip().endswith("?") and 3 <= len(tokens) <= 5:
         return " ".join(tokens).upper() + "?"
     hooks = ("DID YOU CATCH THAT?", "WHAT HAPPENS NEXT?", "WATCH THIS PART CLOSELY")
     digest = hashlib.sha256(" ".join(tokens).encode()).digest()
@@ -89,12 +94,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     if platform in ("Twitch", "Kick"):
         if not name:
             raise ValueError("A streamer handle is required for attribution")
-        credit = f"Clip: @{name} on {platform}"
+        credit = f"Clip: @{name}"
     else:
         credit = "Credit: " + name
-    add(0, length, "Credit", credit)
     if campaign:
-        add(0, length, "Credit", r"{\an1\pos(58,1615)}" + safe(campaign)[:75])
+        credit = (credit + " " + safe(campaign)).rstrip()
+    add(0, length, "Credit", credit)
     for note in notes:
         add(max(0, float(note["start"])), min(length, float(note["end"])), "Credit",
             r"{\an5\pos(540,1470)}" + safe(note["text"])[:150])
@@ -128,7 +133,7 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
     length = min(length, MAX_SEGMENT_SECONDS)
     ass = out.with_suffix(".ass")
     audio = any(s["codec_type"] == "audio" for s in probe(source)["streams"])
-    subtitles(ass, words, length, hook or curiosity_hook(title), credit, notes, platform=platform,
+    subtitles(ass, words, length, curiosity_hook(title, hook), credit, notes, platform=platform,
               campaign=campaign, gap="[Gameplay footage]" if audio else "[Silent footage]")
     # Brief center punch-in on each cut, then settle back to uncropped gameplay.
     vf = ("[0:v]fps=30,setsar=1,split[back][front];"

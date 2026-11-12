@@ -72,21 +72,27 @@ def twitch_clips(channels, config, end):
         "client_id": cloud_archive.required("TWITCH_CLIENT_ID"), "client_secret": cloud_archive.required("TWITCH_CLIENT_SECRET"),
         "grant_type": "client_credentials"}, timeout=25)
     r.raise_for_status()
-    headers = {"Client-Id": os.environ["TWITCH_CLIENT_ID"],
-               "Authorization": "Bearer " + r.json()["access_token"]}
+    auth = r.json()
+    if not isinstance(auth, dict) or not isinstance(auth.get("access_token"), str) or not auth["access_token"]:
+        raise ValueError("Twitch token exchange returned no access token")
+    headers = {"Client-Id": os.environ["TWITCH_CLIENT_ID"], "Authorization": "Bearer " + auth["access_token"]}
     def get(endpoint, **params):
         resp = requests.get("https://api.twitch.tv/helix/" + endpoint, params=params,
                             headers=headers, timeout=25)
         resp.raise_for_status()
-        return resp.json()
-    game_rows = get("games", name=config["target_game_names"]).get("data")
-    games = {g["name"]: g["id"] for g in (game_rows if isinstance(game_rows, list) else [])
+        page = resp.json()
+        if not isinstance(page, dict) or not isinstance(page.get("data"), list):
+            raise ValueError(f"Unexpected Twitch {endpoint} response")
+        return page
+    game_rows = get("games", name=config["target_game_names"])["data"]
+    games = {g["name"]: g["id"] for g in game_rows
              if isinstance(g, dict) and isinstance(g.get("name"), str) and isinstance(g.get("id"), str)}
     handles = {}
     ids = list(channels)
     for i in range(0, len(ids), 100):
-        users = get("users", id=ids[i:i+100]).get("data") or []
-        handles.update((u["id"], u["login"]) for u in users if isinstance(u, dict) and u.get("id") and u.get("login"))
+        users = get("users", id=ids[i:i+100])["data"]
+        handles.update((u["id"], u["login"]) for u in users if isinstance(u, dict)
+                       and isinstance(u.get("id"), str) and isinstance(u.get("login"), str) and u["login"])
     clips = {}
     for broadcaster in channels:
         if broadcaster not in handles:
@@ -96,13 +102,13 @@ def twitch_clips(channels, config, end):
                       ended_at=end.isoformat(), first=100)
         for _ in range(10):  # Helix limits one query to roughly 1,000 results.
             page = get("clips", **params)
-            rows = page.get("data")
-            for c in rows if isinstance(rows, list) else ():
+            for c in page["data"]:
                 if (isinstance(c, dict) and isinstance(c.get("id"), str)
                         and c.get("broadcaster_id") == broadcaster and c.get("game_id") in games.values()):
                     clips[c["id"]] = dict(c, campaign=channels[broadcaster], broadcaster_login=handles[broadcaster])
-            cursor = page.get("pagination", {}).get("cursor")
-            if not cursor:
+            pagination = page.get("pagination")
+            cursor = pagination.get("cursor") if isinstance(pagination, dict) else None
+            if not isinstance(cursor, str) or not cursor:
                 break
             params["after"] = cursor
     return games, clips
@@ -111,13 +117,23 @@ def twitch_clips(channels, config, end):
 def discover(db, channels, config):
     now = datetime.now(timezone.utc)
     twitch = {k: v for k, v in channels.items() if not k.startswith("kick:")}
-    games, clips = twitch_clips(twitch, config, now) if twitch else ({}, {})
     handles = [k.removeprefix("kick:") for k in channels if k.startswith("kick:")]
+    games, clips = {}, {}
+    twitch_available = False
+    if twitch:
+        try:
+            games, clips = twitch_clips(twitch, config, now)
+            twitch_available = True
+        except (OSError, ValueError) as error:
+            if not handles:
+                raise
+            print(f"Twitch discovery failed ({type(error).__name__}); checking Kick.", file=sys.stderr)
     if handles:
         try:
-            clips.update((c["id"], c) for c in fetch_kick_clips(handles, now=now))
+            for c in fetch_kick_clips(handles, now=now):
+                clips[c["id"]] = dict(c, campaign=channels[c["broadcaster_id"]])
         except RuntimeError:
-            if not twitch:
+            if not twitch_available:
                 raise
             print("Kick feeds unavailable this run; continuing with Twitch.", file=sys.stderr)
     keys = list(clips)
@@ -164,10 +180,18 @@ def store():
 
 def sources_config():
     config = json.loads(Path(__file__).with_name("streamers.json").read_text())
-    channels = {s.strip(): {} for s in os.environ.get("ALLOWED_BROADCASTER_IDS", "").split(",") if s.strip()}
+    roster = config.get("watchlist", [])
+    twitch_metadata = {str(c["broadcaster_id"]): c for c in roster if c.get("broadcaster_id")}
+    kick_metadata = {c["username"]: c for c in roster if c.get("username")}
+    channels = {}
+    for token in os.getenv("ALLOWED_BROADCASTER_IDS", "").split(","):
+        broadcaster = token.strip()
+        if broadcaster:
+            channels[broadcaster] = twitch_metadata.get(broadcaster, {})
     for campaign in config["priority_streamers"]:
         if campaign.get("broadcaster_id"):
-            channels[str(campaign["broadcaster_id"])] = campaign
+            broadcaster = str(campaign["broadcaster_id"])
+            channels[broadcaster] = {**twitch_metadata.get(broadcaster, {}), **campaign}
     if not all(re.fullmatch(r"[0-9]+", i) for i in channels):
         raise ValueError("Set cleared numeric Twitch broadcaster IDs in streamers.json or ALLOWED_BROADCASTER_IDS.")
     for handle in os.getenv("ALLOWED_KICK_CHANNELS", "").lower().split(","):
@@ -175,7 +199,7 @@ def sources_config():
         if handle:
             if not re.fullmatch(r"[a-z0-9_-]+", handle):
                 raise ValueError("Invalid Kick channel in ALLOWED_KICK_CHANNELS")
-            channels["kick:" + handle] = {}
+            channels["kick:" + handle] = kick_metadata.get(handle, {})
     if not channels:
         raise ValueError("Set cleared Twitch broadcaster IDs or ALLOWED_KICK_CHANNELS.")
     return channels, config
@@ -217,11 +241,13 @@ def queued(db, channels, config):
         created = timestamp(c.get("created_at"))
         hours = min(3, config["lookback_hours"]) if c.get("platform") == "kick" else config["lookback_hours"]
         if created and now - timedelta(hours=hours) <= created <= now:
-            rows.append((game, c))
+            rows.append((game, dict(c, campaign=channels[c["broadcaster_id"]])))
     if not rows:
         return VI, []
     used = db.hmget(LEDGER, [c["id"] for _, c in rows])
-    return rows[0][0], [c for (_, c), taken in zip(rows, used) if not taken]
+    game = rows[0][0]
+    candidates = [c for row_game, c in rows if row_game == game]
+    return game, ranked(candidates, {c["id"] for (_, c), taken in zip(rows, used) if taken}, now)
 
 
 def prepare(root):
@@ -327,17 +353,17 @@ def prepare(root):
         print("No eligible clip long enough for a 25-second Short.")
         return
     editorial = json.loads(Path(__file__).with_name("editorial.json").read_text())
-    def cut(c, file, length, youtube=False):
+    def cut(c, file, length):
         edit = editorial["clips"].get(c["id"], {})
         notes = [{**n, "start": n["start"] - c["trim"], "end": n["end"] - c["trim"]}
                  for n in edit.get("notes", [])]
         platform = "Kick" if c.get("platform") == "kick" else "Twitch"
         render_vertical_short(sources[c["id"]], root/file, length, speech[c["id"]], c["title"],
-               c["broadcaster_login"], platform=platform, campaign=c["campaign"].get("campaign_watermark") if youtube else None,
+               c["broadcaster_login"], platform=platform, campaign=c["campaign"].get("campaign_watermark"),
                notes=notes, start=c["trim"], hook=edit.get("hook"),
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
     short_file = root / "youtube-rendering.mp4"
-    cut(short, short_file.name, short["duration"], youtube=True)
+    cut(short, short_file.name, short["duration"])
     if not 25 <= seconds(short_file) < 44:
         raise RuntimeError("Rendered Short must be at least 25 and under 44 seconds")
     short_file.replace(root / "youtube.mp4")

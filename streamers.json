@@ -2,6 +2,11 @@
   "target_game_names": ["Grand Theft Auto VI", "Grand Theft Auto V"],
   "lookback_hours": 3,
   "hype_keywords": ["no way", "clip that", "insane", "chat", "ending", "crazy", "omg"],
-  "kick_watchlist": ["lacy", "marlon", "adinross", "n3on"],
+  "watchlist": [
+    {"name": "FaZe Lacy", "broadcaster_id": "494543675", "username": "lacy", "campaign_watermark": ""},
+    {"name": "Marlon", "broadcaster_id": "1019733647", "username": null, "campaign_watermark": ""},
+    {"name": "AdinRoss", "broadcaster_id": "59299632", "username": "adinross", "campaign_watermark": ""},
+    {"name": "N3on", "aliases": ["Rangesh"], "broadcaster_id": null, "username": "n3on", "campaign_watermark": ""}
+  ],
   "priority_streamers": []
 }
