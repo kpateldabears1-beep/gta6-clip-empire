@@ -69,3 +69,20 @@ Captions and reframing alone do not establish monetization eligibility. [YouTube
 Delivery atomically reserves all source IDs in `gta-clips:v1` and one daily slot in `gta-clips:daily:YYYY-MM-DD` before calling either platform. A timeout may follow a successful upload, so an uncertain attempt consumes its slot. The ledger records each destination separately. Check Studio, the TikTok inbox and the one-day artifact before retrying an uncertain transfer. Use the artifact to finish a partially delivered batch. The runner removes its media and model at job exit.
 
 Run `python3 -m unittest discover -s tests -v` with FFmpeg and ffprobe on the test machine. The synthetic render exercises the camera layout, silence handling, audio normalization to a common sample rate, concatenation and decoding. Live verification requires the accounts and credentials above.
+
+## R2 backups and Reels download URLs
+
+Add Actions secrets `R2_ENDPOINT_URL` (your bucket's HTTPS S3 endpoint), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`. Use a bucket-scoped R2 Object Read & Write credential. The workflow uploads each final Short, compilation and one-off GTA V sample before delivery and cleanup. It verifies the stored length, SHA-256 metadata and MP4 content type. Object keys include the content digest so retries of identical files use the same key. After a backup failure the workflow blocks publishing and attempts to retain the rendered files as a seven-day recovery artifact. A hosted runner's temporary disk is disposable.
+
+Open the private R2 object `manifests/<GitHub run ID>/<attempt>.json`. Each video entry has a six-hour presigned GET URL in `video_url` and a UTC `expires_at`. Supply the URL to Instagram's Reels ingestion while it is valid. Anyone holding the URL can read that one object until expiry. The bucket can stay private. To renew a URL, generate another presigned GET for the manifest's persistent `key` using a bucket-authorized client. [Cloudflare presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+
+## Overnight monitoring
+
+Use **Actions → GTA clips → Run workflow → dry-run** or run `python main.py --dry-run` with the repository requirements, FFmpeg/ffprobe, eSpeak NG and the relevant environment variables. It checks Twitch app credentials with a Helix lookup, Kick's live clip feed, Redis PING, actual Whisper transcription, the split-screen render, and an R2 upload with a signed download and byte comparison. It deletes the uniquely named R2 probe after testing. Kick also tests the OAuth exchange when `KICK_CLIENT_ID` or `KICK_CLIENT_SECRET` is set. Each check prints PASS or FAIL. A failure exits nonzero after the remaining checks run. This mode uses synthetic footage and never enters the posting queue.
+
+The same check runs daily at **09:17 UTC** (3:17 a.m. CST or 4:17 a.m. CDT), independently of the posting schedule. Configure one or both alert destinations as Actions secrets:
+
+- `DISCORD_WEBHOOK_URL` for the Discord channel that should receive alerts.
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for a bot and chat where it can send messages.
+
+Confirmed YouTube uploads and TikTok publication receipts trigger notifications. TikTok inbox transfers and processing receipts are logged separately. Failed scheduled jobs send the failing step, available redacted Python stack frames, and the Actions run link. Missing credentials show up as failed health checks. GitHub controls dispatch timing and must be available to run and deliver these alerts.

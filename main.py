@@ -7,10 +7,14 @@ import os
 from pathlib import Path
 import re
 import sys
+import subprocess
+import shutil
 import tempfile
 
 from render import analyze_audio, join, probe, render_vertical_short, seconds, valid_word
 import delivery
+import cloud_archive
+from monitoring import error_trace, notify_post
 from kick import fetch_kick_clips, timestamp, kick_media_url
 
 VI, V = "Grand Theft Auto VI", "Grand Theft Auto V"
@@ -387,17 +391,109 @@ def publish(root):
             print(f"{dest}: {result}")
         except Exception as e:
             # Never log a signed URL, API response body, or credential. Keep reservations.
+            error_trace(e, dest)
             status = getattr(getattr(e, "resp", None), "status", None)
             errors.append(f"{dest}: {type(e).__name__}" + (f" HTTP {status}" if status else ""))
+        else:
+            try:
+                notify_post(dest, result)
+            except RuntimeError as exc:
+                error_trace(exc, f"{dest} notification")
+                errors.append(f"{dest} delivered; {exc}")
     if errors:
         raise RuntimeError("; ".join(errors) + ". Check the account before clearing any reservations.")
 
 
+def dry_run(root):
+    """Exercise real services using synthetic media, outside the publishing queue."""
+    def twitch():
+        games, _ = twitch_clips({}, {"target_game_names": [V]}, datetime.now(timezone.utc))
+        if V not in games:
+            raise ValueError("Twitch game lookup failed")
+
+    def kick():
+        from kick import clip_page
+        import requests
+        # The clip feed itself is public. Validate any configured app key pair as well.
+        if os.getenv("KICK_CLIENT_ID") or os.getenv("KICK_CLIENT_SECRET"):
+            response = requests.post("https://id.kick.com/oauth/token", data={
+                "grant_type": "client_credentials", "client_id": cloud_archive.required("KICK_CLIENT_ID"),
+                "client_secret": cloud_archive.required("KICK_CLIENT_SECRET")}, timeout=15)
+            response.raise_for_status()
+            if not response.json().get("access_token"):
+                raise ValueError("Kick token exchange returned no token")
+        clip_page("adinross", {"sort": "date", "time": "day"})
+
+    def redis_ping():
+        if not store().ping():
+            raise RuntimeError("Redis PING failed")
+
+    def transcribe():
+        from faster_whisper import WhisperModel
+        binary = shutil.which("espeak-ng") or shutil.which("espeak")
+        if not binary:
+            raise FileNotFoundError("Speech generator missing")
+        wave = root / "speech.wav"
+        subprocess.run([binary, "-s", "145", "-w", str(wave),
+                        "The quick brown fox jumps over the lazy dog."], check=True)
+        model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
+                             download_root=str(root / "model"))
+        segments, _ = model.transcribe(str(wave), language="en", beam_size=1)
+        words = set(re.findall(r"[a-z]+", " ".join(s.text for s in segments).lower()))
+        if len(words & {"quick", "brown", "fox", "jumps", "lazy", "dog"}) < 2:
+            raise RuntimeError("Whisper did not recognize the speech fixture")
+
+    video = root / "health.mp4"
+    def split_screen():
+        source = root / "source.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=blue:s=320x180:r=30,drawbox=x=0:y=0:w=96:h=54:color=red:t=fill",
+                        "-t", "2", "-c:v", "libx264", str(source)], check=True)
+        render_vertical_short(source, video, 2, [], "Health check", "Synthetic fixture",
+                              facecam=[0, 0, .3, .3])
+        streams = probe(video)["streams"]
+        if not any(s.get("width") == 1080 and s.get("height") == 1920 for s in streams):
+            raise RuntimeError("Unexpected video dimensions")
+        if not any(s.get("codec_name") == "aac" and s.get("channels") == 2 for s in streams):
+            raise RuntimeError("Missing stereo AAC")
+        # Check both sides of the split, away from captions.
+        for y, component in ((1148, 2), (1152, 0)):
+            rgb = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(video), "-vf",
+                f"crop=2:2:100:{y},scale=1:1,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-"])
+            if len(rgb) != 3 or rgb[component] < 180:
+                raise RuntimeError("Unexpected split-screen pixels")
+
+    kick_label = "Kick public feed" + (" and app keys" if os.getenv("KICK_CLIENT_ID") or os.getenv("KICK_CLIENT_SECRET")
+                                      else " (keyless)")
+    failed = []
+    for name, check in [("Twitch app keys and Helix", twitch), (kick_label, kick),
+                        ("Redis PING", redis_ping), ("Whisper speech transcription", transcribe),
+                        ("FFmpeg split-screen and AAC", split_screen),
+                        ("R2 upload and presigned GET", lambda: cloud_archive.check_upload(video))]:
+        try:
+            check()
+            print(f"PASS  {name}", flush=True)
+        except Exception as exc:
+            failed.append(name)
+            print(f"FAIL  {name} — {error_trace(exc, name)}", flush=True)
+    if failed:
+        raise RuntimeError("Health checks failed: " + ", ".join(failed))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["enqueue", "prepare", "publish", "kick-trending"])
+    parser.add_argument("--dry-run", action="store_true", help="run all live dependency checks without posting")
+    parser.add_argument("action", nargs="?", choices=["archive", "enqueue", "prepare", "publish", "kick-trending"])
     parser.add_argument("work", type=Path, nargs="?")
     args = parser.parse_args()
+    if args.dry_run:
+        if args.action or args.work:
+            parser.error("run --dry-run on its own")
+        with tempfile.TemporaryDirectory(prefix="gta-health-") as tmp:
+            dry_run(Path(tmp))
+        return
+    if not args.action:
+        parser.error("select an action or use --dry-run")
     if args.action == "kick-trending":
         print(json.dumps(fetch_kick_clips(), indent=2))
         return
@@ -406,13 +502,14 @@ def main():
     root = args.work.resolve()
     if not root.is_dir() or Path(tempfile.gettempdir()).resolve() not in root.parents:
         parser.error("use a dedicated existing subdirectory of the system temp directory")
-    {"enqueue": enqueue, "prepare": prepare, "publish": publish}[args.action](root)
+    {"enqueue": enqueue, "prepare": prepare, "publish": publish, "archive": cloud_archive.archive}[args.action](root)
 
 
 if __name__ == "__main__":
     try:
         main()
     except (ValueError, RuntimeError) as e:
+        print(error_trace(e), file=sys.stderr)
         sys.exit(str(e))
     except Exception as e:
-        sys.exit(f"Pipeline failed: {type(e).__name__}. Check configuration, source, quota and connectivity.")
+        sys.exit("Pipeline failed: " + error_trace(e))

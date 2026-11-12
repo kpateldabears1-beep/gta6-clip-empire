@@ -3,12 +3,13 @@ on:
   schedule:
     - cron: '0 * * * *'
     - cron: '30 23 * * *'
+    - cron: '17 9 * * *'  # 03:17 CST / 04:17 CDT
   workflow_dispatch:
     inputs:
       mode:
         description: Delivery mode
         type: choice
-        options: [preview, deliver, verify, gta5-sample, kick-trending]
+        options: [preview, deliver, verify, gta5-sample, kick-trending, dry-run]
         default: preview
       publish_sample:
         description: Publish the GTA V sample once to the authorized YouTube channel
@@ -18,7 +19,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: gta-clips
+  group: gta-clips-${{ (inputs.mode == 'dry-run' || github.event.schedule == '17 9 * * *') && 'health' || 'delivery' }}
   cancel-in-progress: false
 
 env:
@@ -44,10 +45,52 @@ jobs:
               print(handle, count)
           PYTHON
 
-  pipeline:
-    if: inputs.mode != 'kick-trending' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true')
+  health:
+    if: inputs.mode == 'dry-run' || github.event.schedule == '17 9 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      detail: ${{ steps.trace.outputs.detail }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install health check dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg espeak-ng
+          python -m pip install -r requirements.txt
+      - name: Run live checks without posting
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          KICK_CLIENT_ID: ${{ secrets.KICK_CLIENT_ID }}
+          KICK_CLIENT_SECRET: ${{ secrets.KICK_CLIENT_SECRET }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python -u main.py --dry-run
+      - name: Collect error trace
+        id: trace
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/clips-error-trace.txt" ]; then
+            echo "detail=$(tail -n 8 "$RUNNER_TEMP/clips-error-trace.txt" | paste -sd '|' -)" >> "$GITHUB_OUTPUT"
+          fi
+
+  pipeline:
+    if: github.event.schedule != '17 9 * * *' && inputs.mode != 'dry-run' && inputs.mode != 'kick-trending' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      detail: ${{ steps.trace.outputs.detail }}
     steps:
       - name: Space scheduled runs across the day
         id: slot
@@ -96,6 +139,7 @@ jobs:
             if docker exec clips-test-redis redis-cli ping | grep -qx PONG; then break; fi
             sleep 1
           done
+          python -m pip install 'moto[s3]>=5,<6'
           CLIPS_TEST_REDIS_URL=redis://127.0.0.1:6379/15 python -m unittest discover -s tests -v
       - name: Verify the configured Redis connection and reservations
         if: inputs.mode == 'verify'
@@ -152,8 +196,32 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+      - name: Back up final videos and create Reels download URLs
+        id: r2
+        if: >-
+          ${{ !cancelled() && env.CLIP_WORK != '' &&
+          (steps.render.outputs.ready == 'true' || inputs.mode == 'gta5-sample' || failure()) }}
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python main.py archive "$CLIP_WORK"
+      - name: Retain recovery copies after a failure
+        if: failure() && env.CLIP_WORK != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CLIP_WORK }}/youtube.mp4
+            ${{ env.CLIP_WORK }}/tiktok.mp4
+            ${{ env.CLIP_WORK }}/gta5-freeway.mp4
+            ${{ env.CLIP_WORK }}/batch.json
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
       - name: Deliver videos
-        if: steps.render.outputs.ready == 'true' && (github.event_name == 'schedule' || inputs.mode == 'deliver')
+        if: success() && steps.r2.outcome == 'success' && steps.render.outputs.ready == 'true' && (github.event_name == 'schedule' || inputs.mode == 'deliver')
         env:
           REDIS_URL: ${{ secrets.REDIS_URL }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID || secrets.YOUTUBE_CLIENT_ID_1 }}
@@ -163,12 +231,31 @@ jobs:
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ARTIFACT_ID: ${{ steps.archive.outputs.artifact-id }}
         run: python main.py publish "$CLIP_WORK"
       - name: Remove this run's media and model
         if: always()
+        env:
+          ARCHIVE_STATUS: ${{ steps.r2.outcome }}
         run: |
+          if [ "${ARCHIVE_STATUS:-}" != success ] && [ -n "${CLIP_WORK:-}" ]; then
+            for video in youtube.mp4 tiktok.mp4 gta5-freeway.mp4; do
+              if [ -f "$CLIP_WORK/$video" ]; then exit 0; fi
+            done
+          fi
           case "${CLIP_WORK:-}" in /tmp/gta-clips.*) rm -rf -- "$CLIP_WORK";; esac
+
+      - name: Collect error trace
+        id: trace
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/clips-error-trace.txt" ]; then
+            echo "detail=$(tail -n 8 "$RUNNER_TEMP/clips-error-trace.txt" | paste -sd '|' -)" >> "$GITHUB_OUTPUT"
+          fi
 
   publish-sample:
     needs: pipeline
@@ -206,6 +293,9 @@ jobs:
             | gh api "$endpoint" --input - --jq '.id'
       - name: Upload through the production YouTube client
         env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -214,6 +304,7 @@ jobs:
           import os
           from pathlib import Path
           from delivery import youtube
+          from monitoring import notify_post
           clip = {"title": "Three Trucks, One Freeway Ramp in GTA V",
                   "broadcaster_name": "Unlisted Thoughts (CC0). Edit and sound design by Daily Getaway Clips.",
                   "url": "https://archive.org/details/ut-gtav-b-roll"}
@@ -221,4 +312,28 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               print(f"[View the GTA V Short](https://www.youtube.com/shorts/{video_id})", file=summary)
           print(f"YouTube Short: https://www.youtube.com/shorts/{video_id}")
+          notify_post("youtube", video_id)
           PYTHON
+
+  scheduled-failure-alert:
+    needs: [pipeline, health]
+    if: >-
+      ${{ always() && github.event_name == 'schedule' &&
+      (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Send the failure trace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILURE_TRACE: ${{ needs.pipeline.outputs.detail || needs.health.outputs.detail }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 monitoring.py
