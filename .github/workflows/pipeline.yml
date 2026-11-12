@@ -8,7 +8,7 @@ on:
       mode:
         description: Delivery mode
         type: choice
-        options: [preview, deliver]
+        options: [preview, deliver, verify]
         default: preview
 
 permissions:
@@ -61,15 +61,28 @@ jobs:
             sudo apt-get install -y ffmpeg
           fi
           python -m pip install -r requirements.txt
+      - name: Verify the runner, media output and Redis reservations
+        if: inputs.mode == 'verify'
+        run: |
+          command -v ffmpeg
+          command -v ffprobe
+          python -m pip check
+          python -c 'import yt_dlp, faster_whisper, redis, googleapiclient.discovery, cryptography.fernet'
+          docker run --detach --name clips-test-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+          for attempt in {1..30}; do
+            if docker exec clips-test-redis redis-cli ping | grep -qx PONG; then break; fi
+            sleep 1
+          done
+          CLIPS_TEST_REDIS_URL=redis://127.0.0.1:6379/15 python -m unittest discover -s tests -v
       - name: Allocate private workspace
-        if: steps.slot.outputs.due == 'true'
+        if: steps.slot.outputs.due == 'true' && inputs.mode != 'verify'
         run: |
           work=$(mktemp -d /tmp/gta-clips.XXXXXXXX)
           echo "CLIP_WORK=$work" >> "$GITHUB_ENV"
           echo "HF_HOME=$work/hf" >> "$GITHUB_ENV"
       - name: Find and render cleared clips
         id: render
-        if: steps.slot.outputs.due == 'true'
+        if: steps.slot.outputs.due == 'true' && inputs.mode != 'verify'
         env:
           DELIVERY_MODE: ${{ inputs.mode || 'deliver' }}
           ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}

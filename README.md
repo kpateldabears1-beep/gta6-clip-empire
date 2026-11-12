@@ -38,6 +38,8 @@ python3 scripts/tiktok_auth.py --repo OWNER/gta6-clip-empire
 
 ## Run a preview and deliver
 
+Select **Actions → GTA clips → Run workflow → verify** to check the installed dependencies, render and decode synthetic footage, and exercise delivery reservations against a disposable Redis server on the runner. This mode runs without account credentials and sends no videos.
+
 1. Open **Actions → GTA clips → Run workflow → preview**. The one-day artifact contains `youtube.mp4`, source metadata in `batch.json`, and `tiktok.mp4` if two or three clips can supply enough usable footage. Preview leaves delivery counters and reservations untouched.
 2. Review the files, then select **deliver** to process current candidates and request **public visibility on YouTube**. A new run can select different clips from the previous preview. Check the reported visibility in the job log and processing in YouTube Studio.
 3. Open the TikTok inbox notification to edit and publish the compilation. Without TikTok credentials, the compilation is available in the artifact. TikTok may limit pending inbox shares. A failed or delayed transfer remains associated with the batch. Direct Post requires a creator-facing preview, choice of privacy, and explicit consent per video. TikTok excludes private account-management utilities from that integration. [TikTok sharing guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines)
