@@ -1,0 +1,41 @@
+name: GTA highlight editing room
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        description: Inspect the action or render the edited pilot
+        options: [storyboard, preview]
+        default: storyboard
+permissions:
+  contents: read
+jobs:
+  edit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch recording and cut preview on the runner
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          if ! command -v ffmpeg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y ffmpeg; fi
+          mkdir -p "$RUNNER_TEMP/review"
+          curl -fsSL --max-time 150 --retry 2 https://archive.org/download/ut-gtav-b-roll/B_ROLL_6.mp4 -o "$RUNNER_TEMP/recording.mp4"
+          echo "1083adc5c4d962159563f0fed4b1aa09e1d4bf9c  $RUNNER_TEMP/recording.mp4" | sha1sum -c
+          if [ "$STAGE" = storyboard ]; then
+            for start in 0 80 160; do
+              ffmpeg -v error -ss "$start" -i "$RUNNER_TEMP/recording.mp4" -vf "fps=1/4,scale=200:-2,tile=4x5:padding=2" -frames:v 1 -q:v 6 "$RUNNER_TEMP/review/sheet-$start.jpg"
+            done
+          else
+            python3 scripts/highlight_preview.py "$RUNNER_TEMP/recording.mp4" "$RUNNER_TEMP/review"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gta-highlight-${{ inputs.stage }}
+          path: ${{ runner.temp }}/review
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
