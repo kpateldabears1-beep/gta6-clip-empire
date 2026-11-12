@@ -50,6 +50,8 @@ Select **gta5-sample** to render the 26-second freeway ramp Short from the [Unli
 
 ## Selection and editing
 
+The **Channel performance and GTA discovery** workflow runs every three hours. Set `YOUTUBE_CHANNEL_ID` to the public destination channel. Its Actions summary ranks recent uploads by observed view changes and lists watchlist GTA candidates by source views per minute. Upstash stores the latest counts and the last observation from each UTC day for 35 days. The public feed covers recent uploads and can lag Studio. Campaigns calculate eligible views and payouts separately. This workflow fetches metadata only. It runs independently of publishing, and does not need a Mac, social login or persistent video files.
+
 `streamers.json` sets the lookback, game names and creator watchlist. Each watchlist entry has a Twitch `broadcaster_id`, a Kick `username`, or both. Set its `campaign_watermark` to the exact tracking code supplied by Whop Content Rewards, Vyro, Clipster or Reach.cat. With a blank code the credit shows only the handle. Set `ALLOWED_BROADCASTER_IDS` and `ALLOWED_KICK_CHANNELS` separately for channels you have permission to publish. Legacy Twitch campaigns in `priority_streamers` still work and can supply YouTube `extra_tags`.
 
 Run `python3 main.py kick-trending` to list fresh public clip metadata, or select **kick-trending** in GitHub Actions. It reads the configured Kick usernames and ranks clips from the last three hours by views per minute. N3on and Rangesh share one feed. Marlon is tracked on Twitch. For rendering, only cleared channels and GTA V/VI categories enter the shared queue. Kick ledger keys use the `kick:` prefix.
