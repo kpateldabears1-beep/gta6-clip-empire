@@ -8,7 +8,7 @@ on:
       mode:
         description: Delivery mode
         type: choice
-        options: [preview, deliver, verify]
+        options: [preview, deliver, verify, gta5-sample]
         default: preview
 
 permissions:
@@ -80,9 +80,23 @@ jobs:
           work=$(mktemp -d /tmp/gta-clips.XXXXXXXX)
           echo "CLIP_WORK=$work" >> "$GITHUB_ENV"
           echo "HF_HOME=$work/hf" >> "$GITHUB_ENV"
+      - name: Render the credited GTA V test Short
+        if: inputs.mode == 'gta5-sample'
+        run: |
+          curl --fail --location --retry 2 --max-time 180 \
+            https://archive.org/download/ut-gtav-b-roll/B_ROLL_1.mp4 --output "$CLIP_WORK/original.mp4"
+          python scripts/gta5_sample.py "$CLIP_WORK"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'gta5-sample'
+        with:
+          name: gta5-freeway-short
+          path: ${{ env.CLIP_WORK }}/gta5-freeway.mp4
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - name: Find and render cleared clips
         id: render
-        if: steps.slot.outputs.due == 'true' && inputs.mode != 'verify'
+        if: steps.slot.outputs.due == 'true' && inputs.mode != 'verify' && inputs.mode != 'gta5-sample'
         env:
           DELIVERY_MODE: ${{ inputs.mode || 'deliver' }}
           ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}
