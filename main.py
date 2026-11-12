@@ -1,6 +1,7 @@
 """Run via .github/workflows/pipeline.yml; media and model live on the runner."""
 import argparse
 from datetime import datetime, timedelta, timezone
+from itertools import combinations
 import json
 import math
 import os
@@ -12,8 +13,9 @@ import shutil
 import tempfile
 
 from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
-from render import MAX_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
+from render import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
 import delivery
+import bounties
 import cloud_archive
 from monitoring import error_trace, notify_post
 from kick import fetch_kick_clips, timestamp, kick_media_url
@@ -46,7 +48,7 @@ def ranked(clips, used, now):
             duration, views = float(c.get("duration")), int(c.get("view_count"))
         except (TypeError, ValueError, OverflowError):
             continue
-        if (not created or not math.isfinite(duration) or duration < 18 or views < 0
+        if (not created or not math.isfinite(duration) or duration < MIN_SEGMENT_SECONDS or views < 0
                 or c["id"] in used or len(title) < 4 or title in generic):
             continue
         minutes = (now - created).total_seconds() / 60
@@ -144,21 +146,19 @@ def discover(db, channels, config):
     return select(games, clips.values(), used, now)
 
 
-def compilation(clips):
-    # Find the highest-ranked feasible group (at most three moments); avoid cubic search.
-    suffix = [[] for _ in range(len(clips) + 1)]
-    for i in reversed(range(len(clips))):
-        suffix[i] = sorted([clips[i]["duration"], *suffix[i+1]], reverse=True)[:2]
-    chosen = []
-    for i, c in enumerate(clips):
-        remaining = 2 - len(chosen)
-        later = suffix[i+1][:remaining]
-        group = chosen + [c]
-        total = sum(x["duration"] for x in group)
-        if len(group) >= 2 and total >= 63:
-            return group
-        if later and total + sum(later) >= 63:
-            chosen = group
+def enough_speech(words, length):
+    return sum(end <= length for _, end, _ in words) >= 4
+
+
+def compilation(clips, speech=None):
+    # At most six screened candidates. Check the actual excerpt each source would contribute.
+    for size in (2, 3):
+        for group in combinations(clips, size):
+            lengths = portions([min(c["duration"], MAX_SEGMENT_SECONDS) for c in group])
+            if sum(lengths) < 63 or min(lengths) < MIN_SEGMENT_SECONDS:
+                continue
+            if speech is None or all(enough_speech(speech[c["id"]], n) for c, n in zip(group, lengths)):
+                return list(group)
     return []
 
 
@@ -191,7 +191,7 @@ def sources_config():
     for campaign in config["priority_streamers"]:
         if campaign.get("broadcaster_id"):
             broadcaster = str(campaign["broadcaster_id"])
-            channels[broadcaster] = {**twitch_metadata.get(broadcaster, {}), **campaign}
+            channels[broadcaster] = {**twitch_metadata.get(broadcaster, {}), **campaign, "priority": True}
     if not all(re.fullmatch(r"[0-9]+", i) for i in channels):
         raise ValueError("Set cleared numeric Twitch broadcaster IDs in streamers.json or ALLOWED_BROADCASTER_IDS.")
     for handle in os.getenv("ALLOWED_KICK_CHANNELS", "").lower().split(","):
@@ -199,7 +199,13 @@ def sources_config():
         if handle:
             if not re.fullmatch(r"[a-z0-9_-]+", handle):
                 raise ValueError("Invalid Kick channel in ALLOWED_KICK_CHANNELS")
-            channels["kick:" + handle] = kick_metadata.get(handle, {})
+            metadata = kick_metadata.get(handle, {})
+            for campaign in config["priority_streamers"]:
+                kick_name = campaign.get("kick_username") or (campaign.get("username") if not campaign.get("broadcaster_id") else None)
+                if kick_name == handle or (metadata.get("broadcaster_id") and
+                        str(campaign.get("broadcaster_id")) == metadata["broadcaster_id"]):
+                    metadata = {**metadata, **campaign, "priority": True}
+            channels["kick:" + handle] = metadata
     if not channels:
         raise ValueError("Set cleared Twitch broadcaster IDs or ALLOWED_KICK_CHANNELS.")
     return channels, config
@@ -298,17 +304,16 @@ def prepare(root):
         c["duration"] = min(float(video.get("duration") or metadata["format"]["duration"]),
                             c["duration"])
         if not any(s["codec_type"] == "audio" for s in metadata["streams"]):
-            c["trim"] = 0
-            c["duration"] = min(MAX_SEGMENT_SECONDS, c["duration"])
-            c["hype_hits"] = []
-            speech[c["id"]] = []
-            return True
+            print(f"Skipped {c['id']}: no audio or spoken words.")
+            return False
         samples = decode_audio(src, min(c["duration"], MAX_SEGMENT_SECONDS + 1.5))
         trim, active = audio_activity(samples)
         if not active:
             return False
         c["trim"] = trim
         c["duration"] = min(MAX_SEGMENT_SECONDS, c["duration"] - trim)
+        if c["duration"] < MIN_SEGMENT_SECONDS:
+            return False
         if model is None:
             model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
                                  download_root=str(root / "model"))
@@ -319,18 +324,30 @@ def prepare(root):
         for segment in segments:
             if MUSIC_CUE.search(segment.text):
                 cues.append((segment.start, segment.end))
+            if not re.search(r"[^\W_]", re.sub(r"\[[^\]]*\]|\([^)]*\)", "", segment.text)):
+                continue
+            annotation = False
             for word in getattr(segment, "words", None) or ():
                 start, end, text = (getattr(word, key, None) for key in ("start", "end", "word"))
-                if valid_word((start, end, text)) and start < c["duration"] and end > 0:
-                    words.append((max(0, start), min(end, c["duration"]), text.strip()))
+                if not valid_word((start, end, text)):
+                    continue
+                if annotation or "[" in text or "(" in text:
+                    annotation = "]" not in text and ")" not in text
+                    continue
+                if re.search(r"[^\W_]", text) and start >= 0 and end <= c["duration"]:
+                    words.append((start, end, text.strip()))
+        if not enough_speech(words, c["duration"]):
+            print(f"Skipped {c['id']}: fewer than four spoken words in the cut.")
+            return False
         if screen is None:
             screen = MusicScreen()
         flagged = screen.flagged_span(samples, words, cues)
         if flagged:
-            print(f"Skipped {c['id']}: likely music with vocals and no commentary at {flagged[0]+trim:.1f}–{flagged[1]+trim:.1f}s.")
+            print(f"Skipped {c['id']}: sustained music without commentary at {flagged[0]+trim:.1f}–{flagged[1]+trim:.1f}s.")
             return False
         speech[c["id"]] = words
         transcript = " ".join(w.casefold() for start, end, w in words if start < c["duration"])
+        c["words_per_minute"] = round(60 * len(words) / c["duration"], 1)
         c["hype_hits"] = [kw for kw in config["hype_keywords"] if kw.casefold() in transcript]
         return True
 
@@ -344,13 +361,13 @@ def prepare(root):
         if not accepted:
             continue
         eligible.append(c)
-        if short is None and c["duration"] >= 25:
+        if short is None:
             short = c
-        group = compilation(eligible)
+        group = compilation(eligible, speech)
         if short and group:
             break
     if short is None:
-        print("No eligible clip long enough for a 25-second Short.")
+        print("No eligible source passed the duration and speech checks.")
         return
     editorial = json.loads(Path(__file__).with_name("editorial.json").read_text())
     def cut(c, file, length):
@@ -364,8 +381,8 @@ def prepare(root):
                facecam=editorial["facecams"].get(c["broadcaster_id"], [0, .55, .32, .35]))
     short_file = root / "youtube-rendering.mp4"
     cut(short, short_file.name, short["duration"])
-    if not 25 <= seconds(short_file) < 44:
-        raise RuntimeError("Rendered Short must be at least 25 and under 44 seconds")
+    if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
+        raise RuntimeError("Rendered Short must be at least 18 and under 44 seconds")
     short_file.replace(root / "youtube.mp4")
     if group:
         parts = []
@@ -380,25 +397,33 @@ def prepare(root):
         compilation_file.replace(root / "tiktok.mp4")
     else:
         print("Insufficient distinct footage for TikTok; keeping the YouTube Short.")
-    (root/"batch.json").write_text(json.dumps({"game": game, "short": short, "group": group}))
+    batch_id = os.getenv("GITHUB_RUN_ID", root.name)
+    attempt = os.getenv("GITHUB_RUN_ATTEMPT", "1")
+    if attempt != "1":
+        batch_id += "-" + attempt
+    for cut_name, clips in (("short", [short]), ("compilation", group)):
+        bounties.register(db, batch_id, cut_name, clips)
+    (root/"batch.json").write_text(json.dumps({"game": game, "short": short, "group": group, "batch_id": batch_id}))
     print(f"Prepared {game}: YouTube + {len(group)} TikTok segments.")
 
 
-def reserve(db, ids, batch):
-    # Watch for a competing run; a persistent pending record survives a lost upload response.
-    with db.pipeline() as p:
-        key = day_key()
-        p.watch(LEDGER, key)
-        if any(p.hmget(LEDGER, ids)):
+def reserve(db, ids, batch, *, second_post_ids=()):
+    # Redis retries WATCH conflicts before any platform call. An ambiguous upload keeps its slot.
+    key, cap = day_key(), daily_cap()
+    def transaction(p):
+        available = cap - int(p.get(key) or 0)
+        slots = 2 if second_post_ids and available >= 2 else 1
+        chosen = sorted(set(ids).union(second_post_ids if slots == 2 else ()))
+        if any(p.hmget(LEDGER, chosen)):
             raise RuntimeError("Source already reserved or delivered; prepare a new batch.")
-        if int(p.get(key) or 0) >= daily_cap():
-            return False
+        if available <= 0:
+            return 0
         p.multi()
-        p.incr(key)
+        p.incrby(key, slots)
         p.expire(key, 172800)
-        p.hset(LEDGER, mapping={i: "pending:" + batch for i in ids})
-        p.execute()
-        return True
+        p.hset(LEDGER, mapping={i: "pending:" + batch for i in chosen})
+        return slots
+    return db.transaction(transaction, LEDGER, key, value_from_callable=True)
 
 
 def publish(root):
@@ -418,9 +443,14 @@ def publish(root):
     tiktok_enabled = os.getenv("TIKTOK_ACCESS_TOKEN") or os.getenv("TIKTOK_REFRESH_TOKEN")
     if group and not tiktok_enabled and not os.getenv("ARTIFACT_ID"):
         raise ValueError("Archive the compilation before delivery.")
-    if not reserve(db, sorted(ids), tag):
+    second_ids = [c["id"] for c in group] if tiktok_enabled else []
+    slots = reserve(db, [short["id"]] if second_ids else sorted(ids), tag, second_post_ids=second_ids)
+    if not slots:
         print("Daily delivery cap reached before upload.")
         return
+    if second_ids and slots == 1:
+        group = []
+        print("One daily post slot remained. Reserved it for the Short.")
     outcomes = {i: {} for i in ids}
     outcomes[short["id"]]["youtube"] = "pending"
     for c in group:
@@ -433,13 +463,26 @@ def publish(root):
     for dest, clips in [("youtube", [short]), ("tiktok", group)]:
         if not clips:
             continue
+        cut_name = "short" if dest == "youtube" else "compilation"
+        tracked = any(bounties.active(c) for c in clips)
+        receipt = None
         try:
             if dest == "youtube":
-                result = delivery.youtube(root/"youtube.mp4", short, batch["game"])
+                upload = delivery.youtube(root/"youtube.mp4", short, batch["game"], with_receipt=tracked)
+                if tracked:
+                    receipt, result = upload, upload["id"]
+                else:
+                    result = upload
             elif tiktok_enabled:
-                result = delivery.tiktok(root/"tiktok.mp4", delivery.tiktok_token(db))
+                result = delivery.tiktok(root/"tiktok.mp4", delivery.tiktok_token(db), wait_for_inbox=not tracked)
+                receipt = result.split(":", 1)[1]
             else:
                 result = "github-artifact:" + os.environ["ARTIFACT_ID"]  # workflow saved it before calling publish
+            pending = None
+            if tracked and receipt is not None:
+                batch_id = batch.get("batch_id", tag)
+                bounties.register(db, batch_id, cut_name, clips)
+                pending = bounties.queue(db, batch_id, cut_name, dest, receipt)
             record(clips, dest, result)
             print(f"{dest}: {result}")
         except Exception as e:
@@ -449,10 +492,12 @@ def publish(root):
             errors.append(f"{dest}: {type(e).__name__}" + (f" HTTP {status}" if status else ""))
         else:
             try:
+                if pending:
+                    bounties.process(db, pending)
                 notify_post(dest, result)
-            except RuntimeError as exc:
+            except Exception as exc:
                 error_trace(exc, f"{dest} notification")
-                errors.append(f"{dest} delivered; {exc}")
+                errors.append(f"{dest} delivered; notification failed ({type(exc).__name__})")
     if errors:
         raise RuntimeError("; ".join(errors) + ". Check the account before clearing any reservations.")
 
@@ -536,7 +581,7 @@ def dry_run(root):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="run all live dependency checks without posting")
-    parser.add_argument("action", nargs="?", choices=["archive", "enqueue", "prepare", "publish", "kick-trending"])
+    parser.add_argument("action", nargs="?", choices=["archive", "enqueue", "prepare", "publish", "kick-trending", "bounty-check", "bounty-published"])
     parser.add_argument("work", type=Path, nargs="?")
     args = parser.parse_args()
     if args.dry_run:
@@ -547,6 +592,13 @@ def main():
         return
     if not args.action:
         parser.error("select an action or use --dry-run")
+    if args.action == "bounty-check":
+        bounties.reconcile(store())
+        return
+    if args.action == "bounty-published":
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        bounties.published_event(store(), event["client_payload"])
+        return
     if args.action == "kick-trending":
         print(json.dumps(fetch_kick_clips(), indent=2))
         return

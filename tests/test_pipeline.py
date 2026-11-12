@@ -23,8 +23,10 @@ class Ledger:
         return False
     def get(self, key):
         return self.daily.get(key)
-    def incr(self, key):
-        self.daily[key] = self.daily.get(key, 0) + 1
+    def transaction(self, fn, *keys, **kwargs):
+        return fn(self)
+    def incrby(self, key, n):
+        self.daily[key] = self.daily.get(key, 0) + n
     def expire(self, key, ttl):
         pass
     def watch(self, *keys):
@@ -70,10 +72,20 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(main.reserve(db, ["two"], "3"))
         self.assertEqual(sum(db.daily.values()), 2)
 
+    def test_compilation_rechecks_words_inside_the_planned_excerpt(self):
+        clips = [clip(1, duration=40), clip(2, duration=40), clip(3, duration=30)]
+        early = [(i, i+1, "spoken") for i in range(4)]
+        late = [(i, i+1, "spoken") for i in range(33, 37)]
+        speech = {"1": late, "2": early, "3": early}
+        self.assertEqual([c["id"] for c in main.compilation(clips, speech)], ["2", "3"])
+        self.assertTrue(main.enough_speech(early, 18))
+        self.assertFalse(main.enough_speech(early, 3.9))
+
     def test_ranked_group_satisfies_duration_without_padding(self):
         for durations in ([8, 10, 19, 38], [62], [5, 30, 31], [15, 15, 15], [60, 6], [22]*5):
             group = main.compilation([clip(i, duration=d) for i, d in enumerate(durations)])
-            possible = any(sum(combo) >= 63 for n in (2, 3) for combo in combinations(durations, n))
+            possible = any(sum(min(d, 43.9) for d in combo) >= 63 and min(combo) >= 18
+                           for n in (2, 3) for combo in combinations(durations, n))
             self.assertEqual(bool(group), possible)
             if group:
                 lengths = [c["duration"] for c in group]

@@ -276,9 +276,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install 'google-api-python-client>=2.150,<3' 'google-auth-httplib2>=0.2,<1'
+      - run: python -m pip install 'redis>=5,<8' 'google-api-python-client>=2.150,<3' 'google-auth-httplib2>=0.2,<1'
       - name: Reserve this one-off upload
         env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
           GH_TOKEN: ${{ github.token }}
         run: |
           endpoint="repos/$GITHUB_REPOSITORY/deployments"
@@ -288,6 +289,12 @@ jobs:
             echo "This sample already has an upload reservation. Check its earlier run and YouTube Studio."
             exit 1
           fi
+          python - <<'PYTHON'
+          import os
+          from main import reserve, store
+          if not reserve(store(), ["sample:gta5-freeway"], os.environ["GITHUB_RUN_ID"]):
+              raise SystemExit("Daily post cap reached before sample upload")
+          PYTHON
           jq -n --arg ref "$GITHUB_SHA" --arg env "$env_name" \
             '{ref:$ref,environment:$env,auto_merge:false,required_contexts:[],production_environment:false}' \
             | gh api "$endpoint" --input - --jq '.id'

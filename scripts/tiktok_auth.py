@@ -18,7 +18,7 @@ REDIRECT = "http://127.0.0.1:3455/callback/"
 def authorize(key, secret):
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
-    params = {"client_key": key, "response_type": "code", "scope": "video.upload",
+    params = {"client_key": key, "response_type": "code", "scope": "video.upload,video.list",
               "redirect_uri": REDIRECT, "state": state, "code_challenge_method": "S256",
               "code_challenge": hashlib.sha256(verifier.encode()).hexdigest()}
     result = {}
@@ -58,8 +58,11 @@ def authorize(key, secret):
     req = Request("https://open.tiktokapis.com/v2/oauth/token/", data=urlencode(body).encode())
     with urlopen(req, timeout=30) as response:
         token = json.load(response)
-    if not token.get("access_token") or "video.upload" not in token.get("scope", "").split(","):
+    granted = token.get("scope", "").split(",")
+    if not token.get("access_token") or "video.upload" not in granted:
         raise SystemExit("TikTok did not grant video.upload to this account.")
+    if "video.list" not in granted:
+        print("Inbox uploads enabled. Automatic bounty link lookup requires video.list.")
     return token
 
 

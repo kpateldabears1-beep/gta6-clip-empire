@@ -33,6 +33,20 @@ class CaptionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.getenv("CLIPS_TEST_MUSIC_MODEL") == "1", "live classifier fixtures run on GitHub")
 class AudioScreenTests(unittest.TestCase):
+    def test_long_instrumental_gap_without_whisper_words_is_flagged(self):
+        import numpy as np
+        from unittest.mock import Mock
+        from music_screen import HOP
+        screen = MusicScreen.__new__(MusicScreen)
+        screen.spoken, screen.vocals, screen.music = [0], [1], 2
+        screen.input, screen.output, screen.size, screen.shape = 0, 1, HOP, (HOP,)
+        screen.model = Mock()
+        screen.model.get_tensor.return_value = np.array([0.01, 0.01, 0.95])
+        audible = np.ones(17 * HOP, dtype=np.float32)
+        self.assertIsNone(screen.flagged_span(audible[:-HOP], [], []))
+        self.assertIsNotNone(screen.flagged_span(audible, [], []))
+        self.assertIsNone(screen.flagged_span(audible * 0, [], []))
+
     def test_song_is_flagged_and_narration_is_kept(self):
         from faster_whisper import WhisperModel
 

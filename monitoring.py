@@ -26,7 +26,7 @@ def error_trace(exc, stage=None):
     return trace
 
 
-def send_alert(message):
+def send_alert(message, *, discord_only=False):
     discord = os.getenv("DISCORD_WEBHOOK_URL")
     token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
     run = os.getenv("GITHUB_RUN_ID")
@@ -35,11 +35,11 @@ def send_alert(message):
     targets = []
     if discord:
         targets.append(("Discord", discord, {"content": message[:1950], "allowed_mentions": {"parse": []}}))
-    if token and chat:
+    if token and chat and not discord_only:
         targets.append(("Telegram", f"https://api.telegram.org/bot{token}/sendMessage",
                         {"chat_id": chat, "text": message[:4000]}))
     errors = []
-    if bool(token) != bool(chat):
+    if not discord_only and bool(token) != bool(chat):
         errors.append("Telegram needs both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     if not targets and not errors:
         print("Alert destination missing: configure Discord or Telegram.", file=sys.stderr)

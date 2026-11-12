@@ -8,6 +8,7 @@ from math import isfinite
 from music_screen import audio_activity, decode_audio
 
 # Allow for 30 fps frame rounding and AAC packet padding in the MP4 container.
+MIN_SEGMENT_SECONDS = 18
 MAX_SEGMENT_SECONDS = 43.9
 
 
@@ -106,6 +107,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     words = [item for item in words if valid_word(item)] if isinstance(words, (tuple, list)) else []
     words = sorted((max(0, s), min(length, e), w) for s, e, w in words if s < length and e > 0)
     pos = r"{\pos(540,1070)}"
+    gap = r"{\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" + gap
     cursor, previous_pair = 0, None
     for i, (start, end, _) in enumerate(words):
         start = max(start, cursor)
@@ -118,7 +120,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         pair = min(i // 2 * 2, max(0, len(words) - 2))
         previous_pair = " ".join(safe(w) for _, _, w in words[pair:pair+2])
         phrase = " ".join((r"{\1c&H00E7FF&\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" if j == i
-                           else r"{\1c&HFFFFFF&\fscx100\fscy100}") + safe(w)
+                           else r"{\1c&H00E7FF&\fscx100\fscy100}") + safe(w)
                           for j, (_, _, w) in enumerate(words[pair:pair+2], pair))
         add(start, end, "Caption", pos + phrase)
         cursor = end
@@ -164,7 +166,10 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
             "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac",
             "-b:a", "128k", "-ar", "44100", "-ac", "2", "-movflags", "+faststart", out.name]
     run(cmd, out.parent)
-    if seconds(out) >= 44:
+    encoded = seconds(out)
+    if platform in ("Twitch", "Kick") and encoded < MIN_SEGMENT_SECONDS:
+        raise RuntimeError("Encoded clip shorter than 18 seconds")
+    if encoded >= 44:
         raise RuntimeError("Encoded segment reached the 44-second limit")
 
 

@@ -31,7 +31,7 @@ python3 -m venv /tmp/gta-youtube-auth
 /tmp/gta-youtube-auth/bin/python scripts/youtube_auth.py ~/Downloads/client_secret_YOUR_FILE.json --repo OWNER/gta6-clip-empire
 ```
 
-**TikTok.** Configure Desktop Login Kit and Content Posting API for the app. Register exactly `http://127.0.0.1:3455/callback/` and obtain access to `video.upload`. Run the following command and complete browser consent. The helper uses a state check and TikTok's desktop PKCE convention. The worker refreshes access as needed. It stores rotated tokens as ciphertext in Redis using key material derived from the GitHub secrets. Keep Redis persistent. If that state is lost or consent expires, run the helper again. [Desktop Login Kit](https://developers.tiktok.com/docs/en/login-kit-desktop) · [Token management](https://developers.tiktok.com/docs/en/oauth-user-access-token-management)
+**TikTok.** Configure Desktop Login Kit and Content Posting API for the app. Register exactly `http://127.0.0.1:3455/callback/` and obtain access to `video.upload` and `video.list` (for confirmed bounty share links). Run the following command and complete browser consent. The helper uses a state check and TikTok's desktop PKCE convention. The worker refreshes access as needed. It stores rotated tokens as ciphertext in Redis using key material derived from the GitHub secrets. Keep Redis persistent. If that state is lost or consent expires, run the helper again. [Desktop Login Kit](https://developers.tiktok.com/docs/en/login-kit-desktop) · [Token management](https://developers.tiktok.com/docs/en/oauth-user-access-token-management)
 
 ```sh
 python3 scripts/tiktok_auth.py --repo OWNER/gta6-clip-empire
@@ -50,15 +50,15 @@ Select **gta5-sample** to render the 26-second freeway ramp Short from the [Unli
 
 ## Selection and editing
 
-`streamers.json` sets the lookback, game names and creator watchlist. Each watchlist entry has a Twitch `broadcaster_id`, a Kick `username`, or both. Set its `campaign_watermark` to the exact tracking code supplied by Whop, Vyro or Clipster. With a blank code the credit shows only the handle. Set `ALLOWED_BROADCASTER_IDS` and `ALLOWED_KICK_CHANNELS` separately for channels you have permission to publish. Legacy Twitch campaigns in `priority_streamers` still work and can supply YouTube `extra_tags`.
+`streamers.json` sets the lookback, game names and creator watchlist. Each watchlist entry has a Twitch `broadcaster_id`, a Kick `username`, or both. Set its `campaign_watermark` to the exact tracking code supplied by Whop Content Rewards, Vyro, Clipster or Reach.cat. With a blank code the credit shows only the handle. Set `ALLOWED_BROADCASTER_IDS` and `ALLOWED_KICK_CHANNELS` separately for channels you have permission to publish. Legacy Twitch campaigns in `priority_streamers` still work and can supply YouTube `extra_tags`.
 
 Run `python3 main.py kick-trending` to list fresh public clip metadata, or select **kick-trending** in GitHub Actions. It reads the configured Kick usernames and ranks clips from the last three hours by views per minute. N3on and Rangesh share one feed. Marlon is tracked on Twitch. For rendering, only cleared channels and GTA V/VI categories enter the shared queue. Kick ledger keys use the `kick:` prefix.
 
 The producer resolves Twitch game IDs, rejects untitled or generic clips, and ranks the remaining footage by views per minute of age (one-minute floor). It prefers GTA VI when at least five eligible clips exist and otherwise uses available GTA V footage. The Redis queue holds up to 50 ranked candidates. The worker examines up to six, skips unavailable downloads and quiet clips, and selects the first eligible Short. It measures 100 ms audio windows, requires at least half a second above −40 dBFS, and trims up to 1.5 seconds of leading quiet audio. Transcript keyword hits are recorded in the manifest for review.
 
-The worker screens the actual cut before rendering. Whisper supplies timed words and explicit music cues. Google’s YAMNet scores audible 0.48-second intervals for speech, music and singing. A run of 17 audible intervals (8.16 seconds) with at least 14 likely vocal-music intervals and no detected speech skips the source in both outputs. Quiet intervals and detected speech break the run. The classifier identifies sound types; it cannot identify a track, its owner, or whether its use is licensed. Missed music and false positives are possible. If the screen fails, the run stops before delivery. [YAMNet model](https://github.com/tensorflow/models/tree/master/research/audioset/yamnet)
+The worker screens the actual cut before rendering. Whisper supplies timed words and explicit music cues. Each source and each selected compilation excerpt must contain at least four spoken words inside its boundaries. Transcript annotations are excluded. The source manifest records words per minute. Google’s YAMNet scores audible 0.48-second intervals for speech, music and singing. A run of 17 audible intervals (8.16 seconds) with at least 14 likely singing or instrumental music intervals and no detected speech skips the source in both outputs. Quiet intervals and detected speech break the run. The classifier identifies sound types; it cannot identify a track, its owner, or whether its use is licensed. Missed music and false positives are possible. If the screen fails, the run stops before delivery. [YAMNet model](https://github.com/tensorflow/models/tree/master/research/audioset/yamnet)
 
-YouTube cuts run from 25 seconds to strictly under 44 seconds. Each compilation segment has the same upper limit. TikTok cuts use 2–3 distinct sources targeting 65 seconds. Both outputs use 1080×1920 H.264 at 30 fps with 44.1 kHz stereo AAC, a full-length top hook, a permanent lower-left `Clip: @handle` credit followed by the optional campaign code for that segment, and animated two-word captions. During transcript gaps, a neutral visual cue keeps the caption track active. The archive sample keeps its original creator credit. Set normalized `[left, top, width, height]` facecam coordinates per broadcaster in `editorial.json`. The default assumes a lower-left camera and puts it below the gameplay. The upper 1080×1150 panel center-crops gameplay and the lower 1080×770 panel centers the configured facecam crop. Hooks use three to five words derived from the source title, with an optional editorial override. Clips with no audio stream get stereo silence and skip transcription. Set a broadcaster's value to `null` for a gameplay-only layout. Add original clip-specific analysis with this structure:
+YouTube cuts and individual compilation segments run from 18 seconds to strictly under 44 seconds. TikTok cuts use 2–3 distinct sources targeting 65 seconds. Both outputs use 1080×1920 H.264 at 30 fps with 44.1 kHz stereo AAC, a full-length top hook, a permanent lower-left `Clip: @handle` credit followed by the optional campaign code for that segment, and animated two-word captions. During transcript gaps, a neutral visual cue keeps the caption track active. The archive sample keeps its original creator credit. Set normalized `[left, top, width, height]` facecam coordinates per broadcaster in `editorial.json`. The default assumes a lower-left camera and puts it below the gameplay. The upper 1080×1150 panel center-crops gameplay and the lower 1080×770 panel centers the configured facecam crop. Hooks use three to five words derived from the source title, with an optional editorial override. Discovery rejects silent footage. The renderer retains its silent-audio fallback for synthetic verification and standalone editing. Set a broadcaster's value to `null` for a gameplay-only layout. Add original clip-specific analysis with this structure:
 
 ```json
 {"facecams":{"12345":[0,0.55,0.32,0.35]},"clips":{"ActualClipID":{"hook":"Why the getaway worked","notes":[{"start":2,"end":7,"text":"Watch the rear wheel as the driver accelerates."}]}}}
@@ -68,7 +68,7 @@ Fair use is determined case by case. Attribution, captions and a duration cap ca
 
 ## Recovery and tests
 
-Delivery atomically reserves all source IDs in `gta-clips:v1` and one daily slot in `gta-clips:daily:YYYY-MM-DD` before calling either platform. A timeout may follow a successful upload, so an uncertain attempt consumes its slot. The ledger records each destination separately. Check Studio, the TikTok inbox and the one-day artifact before retrying an uncertain transfer. Use the artifact to finish a partially delivered batch. The runner removes its media and model at job exit.
+Delivery atomically reserves selected source IDs in `gta-clips:v1` and one UTC-day slot per platform upload in `gta-clips:daily:YYYY-MM-DD`. A YouTube Short plus a TikTok inbox upload costs two slots. With one slot left the worker sends the Short. A GitHub artifact costs zero slots, and the one-off YouTube sample shares the same cap. External publishers manage their own limits. A timeout may follow a successful upload, so an uncertain attempt consumes its slot. The ledger records each destination separately. Check Studio, the TikTok inbox and the one-day artifact before retrying an uncertain transfer. Use the artifact to finish a partially delivered batch. The runner removes its media and model at job exit.
 
 Run `python3 -m unittest discover -s tests -v` with FFmpeg and ffprobe on the test machine. The synthetic render exercises the camera layout, silence handling, audio normalization to a common sample rate, concatenation and decoding. Live verification requires the accounts and credentials above.
 
@@ -88,3 +88,28 @@ The same check runs daily at **09:17 UTC** (3:17 a.m. CST or 4:17 a.m. CDT), ind
 - `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for a bot and chat where it can send messages.
 
 Confirmed YouTube uploads and TikTok publication receipts trigger notifications. TikTok inbox transfers and processing receipts are logged separately. Failed scheduled jobs send the failing step, available redacted Python stack frames, and the Actions run link. Missing credentials show up as failed health checks. GitHub controls dispatch timing and must be available to run and deliver these alerts.
+
+## Clipping bounty alerts
+
+Set the Actions secret `DISCORD_WEBHOOK_URL` to a webhook in your private channel. Add the supplied `campaign_watermark` to an entry in `priority_streamers`, or set `"priority": true` and the watermark on a cleared watchlist creator. A Kick-only priority entry can use `username` or `kick_username` and still needs its handle in `ALLOWED_KICK_CHANNELS`. Leave the watermark blank to stop tracking new renders for that campaign.
+
+Each alert gives the public post link, the source handles and campaign codes for that particular cut, and the deadline calculated from the original publication time plus 30 minutes. The pipeline checks immediately after upload. Delayed publication and failed notifications stay in Redis for up to 30 days. Enable `ENABLE_BOUNTY_TRACKING=true` for five-minute checks when the ordinary posting schedule is off. You can also run **Clipping bounty alerts** manually. GitHub can delay scheduled jobs. A retry after Discord accepted a message but the acknowledgment was lost can duplicate the notification.
+
+YouTube uses a confirmed public, processed upload response or an exact match in the public channel feed. TikTok waits for a moderated public video ID, then looks up its share URL and publication time. A creator still completes inbox publication in TikTok. Existing TikTok tokens need consent for the additional `video.list` scope. [YouTube feed](https://developers.google.com/youtube/v3/guides/push_notifications) · [TikTok post status](https://developers.tiktok.com/docs/content-posting-api-reference-get-video-status) · [TikTok video query](https://developers.tiktok.com/docs/tiktok-api-v2-video-query)
+
+For Instagram Reels, Rumble, or a manually completed post, have the account's publisher send an authenticated GitHub `repository_dispatch` of type `clip-published` **after public publication**. Use the platform's confirmed permalink and publication time. The `run_id` is the rendered `batch_id` from `batch.json` and `cut` is `short` or `compilation`. The callback looks up the campaign credits saved for that cut. For example, a publisher would send this shape to the repository's dispatches endpoint:
+
+```json
+{
+  "event_type": "clip-published",
+  "client_payload": {
+    "run_id": "123456789",
+    "cut": "short",
+    "platform": "instagram",
+    "url": "https://www.instagram.com/reel/EXAMPLE/",
+    "published_at": "2026-11-12T14:00:00Z"
+  }
+}
+```
+
+The supported platform names are `youtube`, `tiktok`, `instagram` and `rumble`. Signed R2 ingestion URLs, inbox receipts, and artifact links cannot be submitted as public post links. Instagram and Rumble require a connected publisher or an authenticated callback after a manual post. [GitHub repository dispatch](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event)

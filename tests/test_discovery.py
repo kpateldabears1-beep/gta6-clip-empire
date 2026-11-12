@@ -106,7 +106,7 @@ class DiscoveryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 main.discover(Mock(), channels, {})
 
-    def test_music_candidate_is_skipped_before_a_silent_kick_clip_is_rendered(self):
+    def test_only_speech_rich_nonmusical_cuts_are_rendered(self):
         clip = {"id": "kick:clip_abc", "platform": "kick", "broadcaster_id": "kick:lacy",
                 "title": "Ramp jump", "broadcaster_name": "Lacy", "campaign": {"campaign_watermark": "CODE1"}, "duration": 30}
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
@@ -117,8 +117,10 @@ class DiscoveryTests(unittest.TestCase):
             downloader = unittest.mock.MagicMock()
             downloader.return_value.__enter__.return_value = dl
             whisper = Mock()
-            whisper.return_value.transcribe.return_value = ([SimpleNamespace(start=0, end=10, text="[singing]",
-                words=[SimpleNamespace(start=0, end=1, word="example")])], None)
+            def transcript(count):
+                words = [SimpleNamespace(start=i, end=i+.5, word=w) for i, w in enumerate(["watch", "that", "last", "turn"][:count])]
+                return [SimpleNamespace(start=0, end=5, text=" ".join(w.word for w in words), words=words)], None
+            whisper.return_value.transcribe.side_effect = [transcript(3), transcript(4), transcript(4), transcript(4)]
             stack.enter_context(patch.dict(sys.modules, {
                 "yt_dlp": SimpleNamespace(YoutubeDL=downloader),
                 "yt_dlp.utils": SimpleNamespace(DownloadError=OSError),
@@ -128,15 +130,16 @@ class DiscoveryTests(unittest.TestCase):
             flagged = dict(clip, id="kick:clip_music")
             second = dict(clip, id="kick:clip_two", broadcaster_id="kick:n3on", duration=34,
                           campaign={"campaign_watermark": "CODE2"})
-            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [flagged, clip, second])))
+            stack.enter_context(patch.object(main, "discover", return_value=(main.V, [dict(clip, id="kick:silent"), dict(clip, id="kick:sparse"), flagged, clip, second])))
             stack.enter_context(patch.object(main, "decode_audio", return_value=[0]))
             stack.enter_context(patch.object(main, "audio_activity", return_value=(0, True)))
             screen = stack.enter_context(patch.object(main, "MusicScreen"))
-            screen.return_value.flagged_span.return_value = (0, 8.16)
+            screen.return_value.flagged_span.side_effect = [(0, 8.16), None, None]
             video = {"codec_type": "video", "duration": "30"}
+            with_audio = {"streams": [video, {"codec_type": "audio"}]}
             stack.enter_context(patch.object(main, "probe", side_effect=[
-                {"streams": [video, {"codec_type": "audio"}]}, {"streams": [video]},
-                {"streams": [dict(video, duration="34")]}]))
+                {"streams": [video]}, with_audio, with_audio, with_audio,
+                {"streams": [dict(video, duration="34"), {"codec_type": "audio"}]}]))
             stack.enter_context(patch.object(main, "seconds", side_effect=[30, 64]))
             render = stack.enter_context(patch.object(main, "render_vertical_short"))
             render.side_effect = lambda source, output, *args, **kwargs: output.touch()
@@ -144,11 +147,11 @@ class DiscoveryTests(unittest.TestCase):
             main.prepare(root)
             self.assertEqual([call.kwargs["campaign"] for call in render.call_args_list], ["CODE1", "CODE1", "CODE2"])
             dl.extract_info.assert_any_call("https://kick.com/lacy/clips/clip_abc", download=True)
-            whisper.return_value.transcribe.assert_called_once()
-            screen.return_value.flagged_span.assert_called_once_with([0], [(0, 1, "example")], [(0, 10)])
+            self.assertEqual(whisper.return_value.transcribe.call_count, 4)
+            self.assertEqual(screen.return_value.flagged_span.call_count, 3)
             self.assertEqual(render.call_args.kwargs["platform"], "Kick")
             self.assertEqual([call.args[5] for call in render.call_args_list], ["lacy", "lacy", "n3on"])
-            self.assertEqual(render.call_args_list[0].args[2:5], (30, [], "Ramp jump"))
+            self.assertEqual(len(render.call_args_list[0].args[3]), 4)
             self.assertEqual(json.loads((root / "batch.json").read_text())["short"]["id"], "kick:clip_abc")
 
     def test_invalid_delivery_batch_fails_before_reserving(self):

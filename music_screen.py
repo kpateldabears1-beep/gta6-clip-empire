@@ -77,8 +77,8 @@ class MusicScreen:
             if speech >= .5 or (has_words and speech >= .2 and speech > singing and speech > music):
                 recent.clear()
                 continue
-            likely_lyrics = singing >= .25 or (music >= .45 and (has_words or has_cue))
-            recent.append(bool(likely_lyrics))
+            likely_music = singing >= .25 or music >= .45 or (has_cue and music >= .25)
+            recent.append(bool(likely_music))
             if len(recent) == recent.maxlen and sum(recent) >= 14:
                 return (end - len(recent) * HOP / RATE, end)
         return None
