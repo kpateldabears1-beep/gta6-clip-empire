@@ -1,0 +1,5 @@
+# Live API, Redis, Whisper and R2 checks on the standard Linux runner.
+requests>=2.32,<3
+redis>=5,<8
+faster-whisper>=1.1,<2
+boto3>=1.36,<2

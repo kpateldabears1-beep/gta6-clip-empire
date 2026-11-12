@@ -80,14 +80,15 @@ Open the private R2 object `manifests/<GitHub run ID>/<attempt>.json`. Each vide
 
 ## Overnight monitoring
 
-Use **Actions → GTA clips → Run workflow → dry-run** or run `python main.py --dry-run` with the repository requirements, FFmpeg/ffprobe, eSpeak NG and the relevant environment variables. It checks Twitch app credentials with a Helix lookup, Kick's live clip feed, Redis PING, actual Whisper transcription, the split-screen render, and an R2 upload with a signed download and byte comparison. It deletes the uniquely named R2 probe after testing. Kick also tests the OAuth exchange when `KICK_CLIENT_ID` or `KICK_CLIENT_SECRET` is set. Each check prints PASS or FAIL. A failure exits nonzero after the remaining checks run. This mode uses synthetic footage and never enters the posting queue.
+Use **Actions → GTA clips → Run workflow → dry-run**, or install `requirements-health.txt`, FFmpeg/ffprobe and eSpeak, then run `python main.py --dry-run`. The CLI and Actions summary report PASS or FAIL for each of six checks. A failed check makes the command exit nonzero after the remaining checks run.
 
-The same check runs daily at **09:17 UTC** (3:17 a.m. CST or 4:17 a.m. CDT), independently of the posting schedule. Configure one or both alert destinations as Actions secrets:
+- Twitch exchanges `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` for an app token and looks up GTA V in Helix. Kick checks the public clips response and also checks OAuth if either optional Kick credential is configured.
+- Redis writes a unique health key through `REDIS_URL`, reads and compares its value, then deletes it. The key expires in two minutes if the runner stops early.
+- FFmpeg generates a short spoken test clip, renders blue gameplay above a red facecam, and verifies the pixels on either side of the split and the stereo AAC stream. Whisper must recognize the test phrase in that render. R2 uploads the same clip to a private `health/` key, compares the signed download by SHA-256 and deletes the object. If rendering fails after the source is generated, Whisper and R2 use that source and identify it in the report.
 
-- `DISCORD_WEBHOOK_URL` for the Discord channel that should receive alerts.
-- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for a bot and chat where it can send messages.
+The overnight run starts daily at **09:17 UTC** (3:17 a.m. CST or 4:17 a.m. CDT). The job uses a standard Ubuntu runner with a ten-minute timeout and creates no artifact or social post. At 31 scheduled checks per month, its timeout allows at most 310 runner-minutes, plus up to three minutes per failed run for alert delivery. Standard runner compute is free in this public repository. Artifact storage, other workflows and external services have separate allowances. [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 
-Confirmed YouTube uploads and TikTok publication receipts trigger notifications. TikTok inbox transfers and processing receipts are logged separately. Failed scheduled jobs send the failing step, available redacted Python stack frames, and the Actions run link. Missing credentials show up as failed health checks. GitHub controls dispatch timing and must be available to run and deliver these alerts.
+Set the Actions secret `DISCORD_WEBHOOK_URL` to the private Discord channel's webhook. Optional Telegram delivery uses `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Failed scheduled runs send the run link and available traceback, including file names, line numbers, functions, exception classes and chained failures. Long traces span multiple messages. Credentials, locals, raw request URLs and third-party exception bodies are excluded. Setup failures that precede Python include the failed step and available runner exit code.
 
 ## Clipping bounty alerts
 

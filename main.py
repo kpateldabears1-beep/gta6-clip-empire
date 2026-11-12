@@ -11,13 +11,14 @@ import sys
 import subprocess
 import shutil
 import tempfile
+from uuid import uuid4
 
 from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
 from render import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
 import delivery
 import bounties
 import cloud_archive
-from monitoring import error_trace, notify_post
+from monitoring import DiagnosticError, error_trace, notify_post
 from kick import fetch_kick_clips, timestamp, kick_media_url
 
 VI, V = "Grand Theft Auto VI", "Grand Theft Auto V"
@@ -502,80 +503,114 @@ def publish(root):
         raise RuntimeError("; ".join(errors) + ". Check the account before clearing any reservations.")
 
 
+def check_redis_read_write():
+    db = store()
+    key = "gta-clips:health:" + uuid4().hex
+    value = uuid4().hex
+    if not db.set(key, value, nx=True, ex=120):
+        raise DiagnosticError("Could not create a unique Redis probe key")
+    try:
+        if db.get(key) != value:
+            raise DiagnosticError("Redis returned a different value")
+    finally:
+        if db.delete(key) != 1:
+            raise DiagnosticError("Redis probe key could not be removed")
+
+
 def dry_run(root):
-    """Exercise real services using synthetic media, outside the publishing queue."""
+    """Check real services with one synthetic spoken clip and no delivery credentials."""
     def twitch():
         games, _ = twitch_clips({}, {"target_game_names": [V]}, datetime.now(timezone.utc))
         if V not in games:
-            raise ValueError("Twitch game lookup failed")
+            raise DiagnosticError("Twitch did not return the GTA V game ID")
 
     def kick():
         from kick import clip_page
-        import requests
         # The clip feed itself is public. Validate any configured app key pair as well.
         if os.getenv("KICK_CLIENT_ID") or os.getenv("KICK_CLIENT_SECRET"):
+            import requests
             response = requests.post("https://id.kick.com/oauth/token", data={
                 "grant_type": "client_credentials", "client_id": cloud_archive.required("KICK_CLIENT_ID"),
                 "client_secret": cloud_archive.required("KICK_CLIENT_SECRET")}, timeout=15)
             response.raise_for_status()
             if not response.json().get("access_token"):
-                raise ValueError("Kick token exchange returned no token")
+                raise DiagnosticError("Kick token exchange returned no token")
         clip_page("adinross", {"sort": "date", "time": "day"})
 
-    def redis_ping():
-        if not store().ping():
-            raise RuntimeError("Redis PING failed")
+    source, video = root / "source.mp4", root / "health.mp4"
+    test_clip = None
 
-    def transcribe():
-        from faster_whisper import WhisperModel
+    def split_screen():
+        nonlocal test_clip
         binary = shutil.which("espeak-ng") or shutil.which("espeak")
         if not binary:
-            raise FileNotFoundError("Speech generator missing")
+            raise DiagnosticError("Install espeak-ng or espeak to generate the spoken clip")
         wave = root / "speech.wav"
         subprocess.run([binary, "-s", "145", "-w", str(wave),
                         "The quick brown fox jumps over the lazy dog."], check=True)
-        model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
-                             download_root=str(root / "model"))
-        segments, _ = model.transcribe(str(wave), language="en", beam_size=1)
-        words = set(re.findall(r"[a-z]+", " ".join(s.text for s in segments).lower()))
-        if len(words & {"quick", "brown", "fox", "jumps", "lazy", "dog"}) < 2:
-            raise RuntimeError("Whisper did not recognize the speech fixture")
-
-    video = root / "health.mp4"
-    def split_screen():
-        source = root / "source.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
                         "color=blue:s=320x180:r=30,drawbox=x=0:y=0:w=96:h=54:color=red:t=fill",
-                        "-t", "2", "-c:v", "libx264", str(source)], check=True)
-        render_vertical_short(source, video, 2, [], "Health check", "Synthetic fixture",
+                        "-i", str(wave), "-map", "0:v", "-map", "1:a", "-shortest",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source)], check=True)
+        # If the renderer fails, Whisper and R2 can still diagnose their own service using the source.
+        test_clip = source
+        render_vertical_short(source, video, seconds(source), [], "Health check", "Synthetic fixture",
                               facecam=[0, 0, .3, .3])
         streams = probe(video)["streams"]
         if not any(s.get("width") == 1080 and s.get("height") == 1920 for s in streams):
-            raise RuntimeError("Unexpected video dimensions")
+            raise DiagnosticError("Rendered clip is not 1080 by 1920")
         if not any(s.get("codec_name") == "aac" and s.get("channels") == 2 for s in streams):
-            raise RuntimeError("Missing stereo AAC")
-        # Check both sides of the split, away from captions.
+            raise DiagnosticError("Rendered clip lacks stereo AAC")
         for y, component in ((1148, 2), (1152, 0)):
-            rgb = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(video), "-vf",
+            rgb = subprocess.check_output(["ffmpeg", "-nostdin", "-v", "error", "-i", str(video), "-vf",
                 f"crop=2:2:100:{y},scale=1:1,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-"])
-            if len(rgb) != 3 or rgb[component] < 180:
-                raise RuntimeError("Unexpected split-screen pixels")
+            if len(rgb) != 3 or rgb[component] < 180 or any(v > 80 for i, v in enumerate(rgb) if i != component):
+                raise DiagnosticError("Incorrect gameplay or facecam pixels at the panel boundary")
+        test_clip = video
+
+    def media():
+        if test_clip is None:
+            raise DiagnosticError("Could not generate the spoken test clip")
+        return test_clip
+
+    def transcribe():
+        clip = media()
+        from faster_whisper import WhisperModel
+        model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
+                             download_root=str(root / "model"))
+        segments, _ = model.transcribe(str(clip), language="en", beam_size=1)
+        words = set(re.findall(r"[a-z]+", " ".join(s.text for s in segments).lower()))
+        if len(words & {"quick", "brown", "fox", "jumps", "lazy", "dog"}) < 2:
+            raise DiagnosticError("Whisper did not recognize the spoken test phrase")
+
+    def upload():
+        cloud_archive.check_upload(media())
 
     kick_label = "Kick public feed" + (" and app keys" if os.getenv("KICK_CLIENT_ID") or os.getenv("KICK_CLIENT_SECRET")
                                       else " (keyless)")
-    failed = []
+    failed, report = [], []
     for name, check in [("Twitch app keys and Helix", twitch), (kick_label, kick),
-                        ("Redis PING", redis_ping), ("Whisper speech transcription", transcribe),
-                        ("FFmpeg split-screen and AAC", split_screen),
-                        ("R2 upload and presigned GET", lambda: cloud_archive.check_upload(video))]:
+                        ("Upstash Redis write, read and delete", check_redis_read_write),
+                        ("FFmpeg gameplay top, facecam bottom and AAC", split_screen),
+                        ("Whisper speech transcription", transcribe),
+                        ("R2 upload, signed download and delete", upload)]:
         try:
             check()
-            print(f"PASS  {name}", flush=True)
+            line = f"PASS  {name}"
+            if check in (transcribe, upload):
+                line += " (source clip)" if test_clip == source else " (rendered clip)"
         except Exception as exc:
             failed.append(name)
-            print(f"FAIL  {name} — {error_trace(exc, name)}", flush=True)
+            line = "FAIL  " + error_trace(exc, name)
+        report.append(line)
+        print(line, flush=True)
+    summary = f"{len(report) - len(failed)}/{len(report)} health checks passed"
+    print(summary, flush=True)
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
+            handle.write("### " + summary + "\n\n```text\n" + "\n".join(report) + "\n```\n")
     if failed:
-        raise RuntimeError("Health checks failed: " + ", ".join(failed))
+        raise DiagnosticError("Health checks failed: " + ", ".join(failed))
 
 
 def main():

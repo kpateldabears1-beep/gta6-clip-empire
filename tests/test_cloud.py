@@ -3,8 +3,9 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import cloud_archive
@@ -35,7 +36,9 @@ class MonitoringTests(unittest.TestCase):
             except ValueError as exc:
                 trace = monitoring.error_trace(exc, "R2")
             stored = (Path(tmp) / "clips-error-trace.txt").read_text()
-            self.assertIn("test_cloud.py:", trace)
+            self.assertEqual(trace, "R2: ValueError")
+            self.assertIn("test_cloud.py:", stored)
+            self.assertIn("Traceback (most recent call last)", stored)
             self.assertIn("R2: ValueError", stored)
             self.assertNotIn("private", stored)
 
@@ -44,27 +47,88 @@ class MonitoringTests(unittest.TestCase):
                "steps": [{"name": "Install dependencies", "conclusion": "failure"}]}
         env = {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "231", "GITHUB_RUN_ATTEMPT": "2"}
         with patch.dict(os.environ, env, clear=True), patch("subprocess.check_output", return_value=json.dumps({"jobs":[job]})), \
-                patch("subprocess.run", return_value=Mock(returncode=0, stdout=b"secret\n##[error]Process completed with exit code 42.")), \
+                patch("subprocess.run", return_value=Mock(returncode=0, stdout=b'  File "/secret/install.py", line 4, in load\nRuntimeError: secret\n##[error]Process completed with exit code 42.')), \
                 patch.object(monitoring, "send_alert", return_value=True) as send:
             self.assertTrue(monitoring.failure_alert())
             message = send.call_args.args[0]
             self.assertIn("health (failure): Install dependencies", message)
             self.assertIn("exit code 42", message)
+            self.assertIn("install.py:4 in load", message)
+            self.assertIn("RuntimeError", message)
             self.assertNotIn("secret", message)
+
+    def test_long_scheduled_trace_reaches_discord_without_truncation(self):
+        trace = "\n".join(f"  decoder.py:{n} in decode" for n in range(160))
+        env = {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "231", "GITHUB_RUN_ATTEMPT": "1",
+               "DISCORD_WEBHOOK_URL": "https://example.invalid/private", "FAILURE_TRACE": trace}
+        with patch.dict(os.environ, env, clear=True), patch("subprocess.check_output", return_value=b'{"jobs":[]}'), \
+                patch.object(monitoring, "urlopen") as send:
+            self.assertTrue(monitoring.failure_alert())
+            messages = [json.loads(call.args[0].data)["content"] for call in send.call_args_list]
+        self.assertGreater(len(messages), 1)
+        self.assertTrue(all(len(m) <= 2000 for m in messages))
+        body = "\n".join(messages)
+        for line in trace.splitlines():
+            self.assertIn(line, body)
 
     def test_dry_run_collects_all_failures_and_never_publishes(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(main, "twitch_clips", return_value=({main.V:"1"}, {})), \
-                patch("kick.clip_page"), patch.dict(os.environ, {}, clear=True), patch.object(main, "store") as db, \
-                patch.object(main.subprocess, "run", side_effect=OSError), patch.dict("sys.modules", {"faster_whisper": None}), \
-                patch.object(cloud_archive, "check_upload", side_effect=ValueError("Missing R2_BUCKET")) as upload, \
-                patch.object(main, "publish") as publish, redirect_stdout(io.StringIO()) as log:
-            db.return_value.ping.return_value = True
+                patch("kick.clip_page"), patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(Path(tmp)/"summary")}, clear=True), \
+                patch.object(main, "check_redis_read_write"), patch.object(main.subprocess, "run", side_effect=OSError), \
+                patch.object(cloud_archive, "check_upload") as upload, patch.object(main, "publish") as publish, \
+                redirect_stdout(io.StringIO()) as log:
             with self.assertRaisesRegex(RuntimeError, "Health checks failed"):
                 main.dry_run(Path(tmp))
             self.assertEqual(log.getvalue().count("PASS  ") + log.getvalue().count("FAIL  "), 6)
             self.assertIn("FAIL  R2", log.getvalue())
-            upload.assert_called_once()
+            self.assertIn("3/6 health checks passed", (Path(tmp)/"summary").read_text())
+            upload.assert_not_called()  # No fixture was generated.
             publish.assert_not_called()
+
+    def test_six_checks_use_the_same_render_and_no_social_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            root = Path(tmp)
+            stack.enter_context(patch.dict(os.environ, {}, clear=True))
+            stack.enter_context(patch.object(main, "twitch_clips", return_value=({main.V: "1"}, {})))
+            stack.enter_context(patch("kick.clip_page", return_value={"clips": []}))
+            stack.enter_context(patch.object(main, "check_redis_read_write"))
+            stack.enter_context(patch.object(main.shutil, "which", return_value="espeak"))
+            stack.enter_context(patch.object(main.subprocess, "run"))
+            stack.enter_context(patch.object(main, "seconds", return_value=3))
+            renderer = stack.enter_context(patch.object(main, "render_vertical_short"))
+            stack.enter_context(patch.object(main, "probe", return_value={"streams": [
+                {"height": 1920, "width": 1080}, {"codec_name": "aac", "channels": 2}]}))
+            stack.enter_context(patch.object(main.subprocess, "check_output", side_effect=[bytes([0,0,240]), bytes([240,0,0])]))
+            model = Mock()
+            model.return_value.transcribe.return_value = ([SimpleNamespace(text="the quick brown fox")], None)
+            stack.enter_context(patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=model)}))
+            upload = stack.enter_context(patch.object(cloud_archive, "check_upload"))
+            publish = stack.enter_context(patch.object(main, "publish"))
+            log = stack.enter_context(redirect_stdout(io.StringIO()))
+            main.dry_run(root)
+            output = renderer.call_args.args[1]
+            self.assertEqual(model.return_value.transcribe.call_args.args, (str(output),))
+            upload.assert_called_once_with(output)
+            publish.assert_not_called()
+            self.assertIn("6/6 health checks passed", log.getvalue())
+
+    def test_health_key_is_ephemeral_and_cleaned_on_mismatch(self):
+        with patch.object(main, "store") as store:
+            db = store.return_value
+            db.get.return_value = "wrong"
+            db.delete.return_value = 1
+            with self.assertRaisesRegex(main.DiagnosticError, "different value"):
+                main.check_redis_read_write()
+            key, token = db.set.call_args.args
+            self.assertTrue(key.startswith("gta-clips:health:"))
+            self.assertTrue(token)
+            self.assertEqual(db.set.call_args.kwargs, {"nx": True, "ex": 120})
+            db.delete.assert_called_once_with(key)
+            db.reset_mock()
+            db.set.return_value = False
+            with self.assertRaisesRegex(main.DiagnosticError, "unique"):
+                main.check_redis_read_write()
+            db.delete.assert_not_called()
 
 
 try:
