@@ -1,6 +1,12 @@
 name: November 13 unofficial GTA fan edits
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Prepare a backup or deliver the verified clip for the current Chicago window
+        type: choice
+        options: [prepare, deliver]
+        default: prepare
   schedule:
     - cron: '15 8,11,14,17,20 13 11 *'
       timezone: America/Chicago
@@ -9,7 +15,7 @@ permissions:
   actions: read
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'deliver' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -38,7 +44,7 @@ jobs:
           jq -e 'length == 5' manifest.json
           jq -r 'to_entries[] | "\(.value.sha256)  slot\(.key+1).mp4"' manifest.json | sha256sum -c -
   post:
-    if: github.event_name == 'schedule' && vars.NOV13_VERIFIED_RUN != '' && vars.ENABLE_SCHEDULE == 'true'
+    if: (github.event_name == 'schedule' || inputs.mode == 'deliver') && github.ref == 'refs/heads/main' && vars.NOV13_VERIFIED_RUN != '' && vars.ENABLE_SCHEDULE == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
