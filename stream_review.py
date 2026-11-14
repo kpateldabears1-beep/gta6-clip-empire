@@ -171,8 +171,15 @@ def render_selection(source, packet, selection, out):
                      if s >= clip["start"] and e <= clip["end"]]
             cues = [(max(s,clip["start"])-clip["start"], min(e,clip["end"])-clip["start"])
                     for s,e in packet.get("music_cues", []) if s < clip["end"] and e > clip["start"]]
-            if len(words) < 4 or screen.flagged_span(decode_audio(media, length), words, cues):
-                raise ValueError("Selected story failed speech/music screening; choose another")
+            flagged = screen.flagged_span(decode_audio(media, length), words, cues) if len(words) >= 4 else None
+            if len(words) < 4 or flagged:
+                rejection = dict(source_id=packet["source_id"], clip=clip, spoken_words=len(words),
+                                 reason="music_risk" if flagged else "insufficient_speech",
+                                 flagged_source_interval=[round(t+clip["start"], 3) for t in flagged] if flagged else None,
+                                 status="rejected_before_render_not_a_copyright_determination")
+                (out / "rejected.json").write_text(json.dumps(rejection, indent=2))
+                raise ValueError(f"Selected story rejected: {rejection['reason']}; "
+                                 f"source interval {rejection['flagged_source_interval']}. See rejected.json.")
             final = out / f"preview-{i}.mp4"
             render_vertical_short(media, final, length, words, clip["title"], source["credit"],
                                   hook=clip["hook"], platform=source["platform"])

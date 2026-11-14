@@ -81,13 +81,13 @@ jobs:
           if [[ ! "$SOURCE_ID" =~ ^[a-z0-9-]+$ ]]; then exit 1; fi
           python -u stream_review.py render "$SOURCE_ID" "$RUNNER_TEMP/previews" --packet "$RUNNER_TEMP/packet/review.json" --selection "reviews/$SOURCE_ID.json"
       - uses: actions/upload-artifact@v4
-        if: inputs.mode == 'render'
+        if: always() && inputs.mode == 'render'
         with:
           name: reviewed-previews
           path: ${{ runner.temp }}/previews/
           retention-days: 7
           compression-level: 0
-          if-no-files-found: error
+          if-no-files-found: ignore
       - name: Report review status
         run: |
           echo 'Draft review complete. Analysis provides timed transcripts; render provides selected previews. Visual/audio review remains required before any release. Nothing was published.' >> "$GITHUB_STEP_SUMMARY"
