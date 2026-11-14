@@ -1,0 +1,7 @@
+{
+  "source_id": "lysium-heistmasters",
+  "packet_sha256": "bf0f6eedf81d7fa1767474271584e42a1c2ec21a6ef5c6f3b1367aceefef6613",
+  "decision": "reject",
+  "reason": "The 30-second transcript starts inside a discussion about a prior K-pop proposal and finishes mid-sentence. The insults and impersonation depend on knowing the earlier disagreement; no sufficiently clear standalone setup/payoff is established. Do not pad or label this a heist action scene from its title. Original VOD context may support a different future selection, but this unchanged clip is not ready.",
+  "clips": []
+}
