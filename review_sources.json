@@ -7,5 +7,14 @@
     "permission_url": "https://www.reddit.com/r/DougDoug/comments/1hzagjn/",
     "uploaded_before": "2025-11-13T00:00:00+00:00",
     "note": "Existing cleared archival source for testing the audio-first path. Already published; preview only. This does not authorize current streams or create a bounty campaign."
+  },
+  "dougdoug-counting": {
+    "url": "https://clips.twitch.tv/TardyPolishedFiddleheadsDBstyle-WluufHQSRh7uGOpp",
+    "channel_id": "31507411",
+    "credit": "DougDoug",
+    "platform": "Twitch",
+    "permission_url": "https://www.reddit.com/r/DougDoug/comments/1hzagjn/",
+    "uploaded_before": "2025-11-13T00:00:00+00:00",
+    "note": "Archival GTA candidate from the prior cleared batch. Draft analysis only; check the publication ledger before any future upload. This does not authorize current streams or create a bounty campaign."
   }
 }

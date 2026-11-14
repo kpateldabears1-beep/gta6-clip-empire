@@ -8,7 +8,10 @@
     "diagnostic_run": "43611649341",
     "reason": "music_risk",
     "flagged_source_interval": [23.14, 31.3],
-    "next_action": "Do not rerun unchanged or truncate away the landing payoff. Investigate the audio classification with evidence, or select a different approved source."
+    "classifier_trace_run": "43617368361",
+    "downloaded_duration": 20.8,
+    "trace_finding": "Sixteen of seventeen hops in the flagged interval classify as music. Music scores range from 0.414 to 0.984, speech from 0 to 0.414, singing from 0 to 0.020. Ten hops overlap transcript words. The downloaded section has the requested duration; this is not a too-short download. Scores do not identify a song or establish copyright ownership.",
+    "next_action": "No unchanged reruns. Keep this story rejected pending actual audio/rights review. Screen the separate archival counting source instead."
   },
   "clips": [
     {
