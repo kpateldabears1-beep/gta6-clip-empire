@@ -1,0 +1,18 @@
+{
+  "source_id": "dougdoug-plane",
+  "packet_sha256": "8243b2751f7014ee8c797cd10c587d0d4d4ee9d87accae7197d17b56157af2fc",
+  "analysis_run": "43609853778",
+  "purpose": "Integration preview of an already-published source, not a new upload",
+  "visual_audio_review": "pending",
+  "clips": [
+    {
+      "start": 12.1,
+      "end": 32.9,
+      "title": "Can Twitch chat land DougDoug's GTA plane?",
+      "hook": "Can chat land it?",
+      "setup": "The transcript begins the urgent landing sequence with This is it, followed by keep looking up and instructions to stop on touchdown.",
+      "payoff": "The speaker says We've landed at 24.52 seconds and addresses plane chat at the end. The landing itself still needs visual verification.",
+      "why_interesting": "Keeps the escalating landing instructions and spoken payoff while removing twelve seconds of slower preliminary commentary. This is a story hypothesis for preview review, not a measured retention improvement."
+    }
+  ]
+}

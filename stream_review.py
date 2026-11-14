@@ -104,6 +104,7 @@ def download(source, root, start, end, *, audio):
 def analyze(source_id, source, out, start=0, minutes=12):
     from yt_dlp import YoutubeDL
     from faster_whisper import WhisperModel
+    from music_screen import MUSIC_CUE
     from render import valid_word
     if not number(start) or start < 0 or not 1 <= minutes <= 60:
         raise ValueError("Review at most 60 minutes per run, from a nonnegative offset")
@@ -122,11 +123,16 @@ def analyze(source_id, source, out, start=0, minutes=12):
                         "-ar", "16000", "-ac", "1", str(wav)], check=True)
         model = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=2)
         segments, _ = model.transcribe(str(wav), word_timestamps=True, vad_filter=True, beam_size=1)
-        words = [(round(w.start+start, 3), round(w.end+start, 3), w.word.strip())
-                 for seg in segments for w in seg.words or []
-                 if valid_word((w.start, w.end, w.word)) and w.end <= end-start+.1]
+        words, cues = [], []
+        for seg in segments:
+            if MUSIC_CUE.search(seg.text):
+                cues.append((seg.start+start, seg.end+start))
+                continue
+            words.extend((round(w.start+start, 3), round(w.end+start, 3), w.word.strip())
+                         for w in seg.words or [] if valid_word((w.start, w.end, w.word))
+                         and w.end <= end-start+.1)
     packet = dict(source_id=source_id, source=source, start=start, end=end,
-                  title=info.get("title"), words=words, packets=review_packets(words, start, end),
+                  title=info.get("title"), words=words, music_cues=cues, packets=review_packets(words, start, end),
                   review_status="needs_story_selection_and_visual_review")
     packet["packet_sha256"] = packet_digest(packet)
     out.mkdir(parents=True, exist_ok=True)
@@ -163,7 +169,9 @@ def render_selection(source, packet, selection, out):
                 raise ValueError("Downloaded section is incomplete")
             words = [(s-clip["start"], e-clip["start"], w) for s,e,w in packet["words"]
                      if s >= clip["start"] and e <= clip["end"]]
-            if len(words) < 4 or screen.flagged_span(decode_audio(media, length), words, []):
+            cues = [(max(s,clip["start"])-clip["start"], min(e,clip["end"])-clip["start"])
+                    for s,e in packet.get("music_cues", []) if s < clip["end"] and e > clip["start"]]
+            if len(words) < 4 or screen.flagged_span(decode_audio(media, length), words, cues):
                 raise ValueError("Selected story failed speech/music screening; choose another")
             final = out / f"preview-{i}.mp4"
             render_vertical_short(media, final, length, words, clip["title"], source["credit"],
