@@ -1,0 +1,16 @@
+{
+  "source_id": "lysium-spaghetti",
+  "packet_sha256": "6470aad06c51c6afd912dbb1022af5584a17241838e2280ff1bc4576cb095b86",
+  "clips": [
+    {
+      "start": 5.0,
+      "end": 35.0,
+      "title": "Luciano wasn't ready for this | GTA RP",
+      "hook": "Luciano Wasn't Ready",
+      "setup": "The caller asks whether the other participant is ready, then urges the action. Start at the last readiness exchange to remove the repeated introductory buildup.",
+      "payoff": "The repeated request for another one turns into repeated no/wait reactions, ending with the last-bag and buy-it-all line. Keep the whole reaction and ending.",
+      "why_interesting": "A potentially understandable escalating prank/reaction from the channel's top recent clip. The transcript supports the verbal escalation but not the exact physical joke; full listening and motion review must establish that before approval. Do not claim a crash, heist or spaghetti-breaking action solely from the title. No camera crop is inferred because the inspected source frame has no facecam.",
+      "captions": false
+    }
+  ]
+}
