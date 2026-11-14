@@ -1,0 +1,79 @@
+name: Inspect cloud preview
+on:
+  workflow_dispatch:
+    inputs:
+      render_run:
+        description: Successful stream-review render run
+        required: true
+        type: string
+      source_id:
+        description: Source selection key in reviews
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: preview-qa
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify review inputs
+        run: python -m unittest discover -s tests -p test_preview_qa.py -v
+      - uses: actions/download-artifact@v4
+        with:
+          name: reviewed-previews
+          path: ${{ runner.temp }}/qa-input
+          run-id: ${{ inputs.render_run }}
+          github-token: ${{ github.token }}
+      - name: Inspect existing frames and sound levels
+        env:
+          SOURCE_ID: ${{ inputs.source_id }}
+        run: |
+          if [[ ! "$SOURCE_ID" =~ ^[a-z0-9-]+$ ]]; then exit 1; fi
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          python scripts/review_preview.py "$RUNNER_TEMP/qa-input" "reviews/$SOURCE_ID.json" "$RUNNER_TEMP/qa-output"
+      - name: Check this source's prior upload record
+        env:
+          SOURCE_ID: ${{ inputs.source_id }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: |
+          python -m pip install 'redis>=5,<8'
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          import redis
+          if not os.getenv('REDIS_URL'):
+              print('Publication ledger unavailable; do not infer this is a new source.')
+          else:
+              source = json.loads(Path('review_sources.json').read_text())[os.environ['SOURCE_ID']]
+              slug = source['url'].rsplit('/',1)[-1]
+              db = redis.Redis.from_url(os.environ['REDIS_URL'], decode_responses=True, socket_timeout=20, socket_connect_timeout=10)
+              prior = db.hget('gta-clips:v1', slug)
+              if prior:
+                  entry = json.loads(prior)
+                  print('PRIOR_PUBLICATION ' + json.dumps({k:entry[k] for k in ('youtube','status') if k in entry}))
+              else:
+                  print('No record for this source in the configured ledger; this is not publication authorization.')
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-review-evidence
+          path: ${{ runner.temp }}/qa-output/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Clean temporary review files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/qa-input" "$RUNNER_TEMP/qa-output"
