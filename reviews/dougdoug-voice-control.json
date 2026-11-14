@@ -3,7 +3,16 @@
   "packet_sha256": "8d880a5cecc70db122b918ae0b01876bc9deb3031d44dcf2203cbef77cbe7931",
   "analysis_run": "43622804580",
   "purpose": "Editorial preview only; check previous publication ledger before any release",
-  "visual_audio_review": "pending",
+  "visual_audio_review": "sampled_frames_reviewed_layout_revision_pending_full_motion_and_listening_review",
+  "qa_observation": {
+    "run_id": "43628288107",
+    "prior_youtube_upload_in_ledger": "B2qXMQktQ0s",
+    "integrated_loudness_lufs": -15.95,
+    "true_peak_dbtp": -2.03,
+    "loudness_range_lu": 5.6,
+    "visual_finding": "Six sampled frames confirm GTA gameplay and streamer reactions, but the landscape stream occupies only a narrow central band with large black/blurred areas. Use the visually located face region for a source-specific split layout; do not reuse these coordinates on other streams.",
+    "audio_limit": "Measured levels are healthy; intelligibility and subjective sound quality have not been verified by listening."
+  },
   "technical_preview": {
     "run_id": "43623342326",
     "artifact_id": "14124797522",
@@ -19,6 +28,7 @@
       "title": "DougDoug argues with GTA voice controls",
       "hook": "Will voice control listen?",
       "captions": false,
+      "facecam": [0, 0.59, 0.19, 0.24],
       "caption_reason": "Whisper repeatedly writes Broom and other inconsistent guesses for the voice commands; omit uncertain subtitles until the actual audio is reviewed.",
       "setup": "The source title identifies repeated Vroom Vroom commands that yield no result. This section retains several attempts and the speaker's temporary-plan remark.",
       "payoff": "The transcript shifts to Oh gosh, thank you near 32.12–34.24 seconds. Whether the vehicle actually moves still needs visual verification.",
