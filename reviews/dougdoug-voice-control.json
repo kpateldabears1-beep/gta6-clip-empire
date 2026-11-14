@@ -4,6 +4,14 @@
   "analysis_run": "43622804580",
   "purpose": "Editorial preview only; check previous publication ledger before any release",
   "visual_audio_review": "pending",
+  "technical_preview": {
+    "run_id": "43623342326",
+    "artifact_id": "14124797522",
+    "artifact_expires_at": "2026-11-21T17:52:40Z",
+    "status": "rendered_music_screen_and_decode_checks_passed",
+    "publication": "none",
+    "next_action": "Review actual visuals/audio from the cloud preview and check the prior-publication ledger. Do not rerender unchanged or publish under the expired November 13 backup exception."
+  },
   "clips": [
     {
       "start": 8.9,
