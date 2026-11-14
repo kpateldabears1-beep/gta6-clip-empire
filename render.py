@@ -113,10 +113,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         pos = r"{\pos(540,1430)}"
         stride = max(2, ceil(len(words) / 6))
         for index in range(0, len(words), stride):
-            group = words[index:index + stride]
+            group = words[index:index + min(stride, 3)]
             start = group[0][0]
             next_start = words[index + stride][0] if index + stride < len(words) else length
-            end = min(length, max(group[-1][1], start + 1.05), next_start - .08)
+            end = min(length, start + 1.8, max(group[-1][1], start + 1.05), next_start - .08)
             phrase = " ".join(safe(word) for _, _, word in group)[:80]
             if phrase:
                 add(start, end, "Caption", pos + r"{\fscx94\fscy94\t(0,90,\fscx100\fscy100)}" + phrase)
@@ -157,7 +157,7 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
     if not audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
     cmd += ["-filter_complex", vf, "-map", "[v]", "-map", "0:a:0" if audio else "1:a:0",
-            "-af", "apad", "-t", f"{length:.3f}", "-c:v", "libx264", "-threads", "2",
+            "-af", "loudnorm=I=-16:TP=-2:LRA=9,apad", "-t", f"{length:.3f}", "-c:v", "libx264", "-threads", "2",
             "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac",
             "-b:a", "128k", "-ar", "44100", "-ac", "2", "-movflags", "+faststart", out.name]
     run(cmd, out.parent)

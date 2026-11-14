@@ -5,6 +5,7 @@
   "candidate_probe_limit": 12,
   "minimum_moment_score": 4,
   "minimum_source_views": 100,
+  "add_background_music": false,
   "watchlist": [
     {"name": "FaZe Lacy", "broadcaster_id": "494543675", "username": "lacy", "campaign_watermark": ""},
     {"name": "Marlon", "broadcaster_id": "1019733647", "username": null, "campaign_watermark": ""},

@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 from kick import fetch_kick_clips
 from main import V, VI, ranked, store
 from monitoring import error_trace
+from earnings_report import report as earnings_report
 
 
 def feed_counts(feed, channel):
@@ -67,7 +68,8 @@ def candidate_report(now):
 if __name__ == "__main__":
     now = datetime.now(timezone.utc)
     failures = []
-    for label, collect in (("YouTube performance", lambda: view_report(store(), os.environ["YOUTUBE_CHANNEL_ID"], now)),
+    for label, collect in (("Earnings plan", earnings_report),
+                           ("YouTube performance", lambda: view_report(store(), os.environ["YOUTUBE_CHANNEL_ID"], now)),
                            ("Kick discovery", lambda: candidate_report(now))):
         try:
             lines = collect()

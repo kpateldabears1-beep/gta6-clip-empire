@@ -198,6 +198,7 @@ jobs:
         if: steps.slot.outputs.due == 'true' && inputs.mode != 'verify' && inputs.mode != 'gta5-sample'
         env:
           DELIVERY_MODE: ${{ inputs.mode || 'deliver' }}
+          BUILD_COMPILATION: ${{ (secrets.TIKTOK_ACCESS_TOKEN != '' || secrets.TIKTOK_REFRESH_TOKEN != '' || vars.BUILD_COMPILATION == 'true') && 'true' || 'false' }}
           ALLOWED_KICK_CHANNELS: ${{ vars.ALLOWED_KICK_CHANNELS }}
           ALLOWED_BROADCASTER_IDS: ${{ vars.ALLOWED_BROADCASTER_IDS }}
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}

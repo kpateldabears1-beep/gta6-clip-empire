@@ -13,6 +13,7 @@ import shutil
 import tempfile
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+from editorial_score import opening_quality, reaction_peaks
 
 from music_screen import MUSIC_CUE, RATE, MusicScreen, audio_activity, decode_audio
 from render import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, join, probe, render_vertical_short, seconds, valid_word
@@ -373,6 +374,8 @@ def prepare(root):
         c["words_per_minute"] = round(60 * len(words) / c["duration"], 1)
         c["hype_hits"] = [kw for kw in config["hype_keywords"] if kw.casefold() in transcript]
         c["moment_score"] = moment_score(c, transcript)
+        c["reaction_peaks"] = reaction_peaks(samples)
+        c["opening_quality"] = opening_quality(words)
         return True
 
     eligible, short, group = [], None, []
@@ -388,7 +391,8 @@ def prepare(root):
     def priority(c):
         traction = math.log1p(c.get("view_count", 0)) + math.log1p(c.get("velocity", 0))
         return (preferred is not None and c.get("platform", "twitch") == preferred,
-                traction + min(c["moment_score"], 10) * .5)
+                traction + min(c["moment_score"], 10) * .5
+                + min(len(c["reaction_peaks"]), 3) + c["opening_quality"])
     for c in candidates[:probe_limit]:
         try:
             accepted = load(c)
@@ -405,7 +409,8 @@ def prepare(root):
         # event, then a spoken reaction rather than generic gameplay.
         if short is None or priority(c) > priority(short):
             short = c
-        group = compilation(eligible, speech)
+        if os.getenv("BUILD_COMPILATION", "true") == "true":
+            group = compilation(eligible, speech)
     if short is None:
         print("No eligible source had a clear action or reaction moment.")
         return
@@ -423,7 +428,8 @@ def prepare(root):
     cut(short, short_file.name, short["duration"])
     if not MIN_SEGMENT_SECONDS <= seconds(short_file) < 44:
         raise RuntimeError("Rendered Short must be at least 18 and under 44 seconds")
-    short["music_credit"] = music_mix(short_file, preserve_audio=True)
+    if config.get("add_background_music", False):
+        short["music_credit"] = music_mix(short_file, preserve_audio=True)
     short["social_captions"] = {dest: delivery.social_caption(short, game, dest)
                                 for dest in ("instagram", "rumble", "youtube")}
     short_file.replace(root / "youtube.mp4")
@@ -437,12 +443,13 @@ def prepare(root):
         join(parts, compilation_file)
         if not 62 < seconds(compilation_file) < 66:
             raise RuntimeError("Rendered compilation outside target length")
-        music_credit = music_mix(compilation_file, preserve_audio=True)
-        for clip in group:
-            clip["compilation_music_credit"] = music_credit
+        if config.get("add_background_music", False):
+            music_credit = music_mix(compilation_file, preserve_audio=True)
+            for clip in group:
+                clip["compilation_music_credit"] = music_credit
         compilation_file.replace(root / "tiktok.mp4")
     else:
-        print("Insufficient distinct footage for TikTok; keeping the YouTube Short.")
+        print("YouTube-only output: compilation disabled or insufficient eligible footage.")
     batch_id = os.getenv("GITHUB_RUN_ID", root.name)
     attempt = os.getenv("GITHUB_RUN_ATTEMPT", "1")
     if attempt != "1":

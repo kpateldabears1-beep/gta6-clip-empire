@@ -22,7 +22,11 @@ class MediaTests(unittest.TestCase):
                 # The source is plain blue: bright neutral pixels here are burned-in watermark text.
                 pixels = subprocess.check_output(["ffmpeg", "-v", "error", "-ss", moment, "-i", str(out),
                     "-vf", "crop=900:150:40:1660,format=gray", "-frames:v", "1", "-f", "rawvideo", "-"])
-                self.assertGreater(sum(p > 210 for p in pixels), 1000)
+                bright = sum(p > 210 for p in pixels)
+                if moment == "0.2":
+                    self.assertGreater(bright, 100)
+                else:
+                    self.assertLess(bright, 20)  # Brief credit has cleared by the end.
 
     def test_render_and_join_with_speech_timing_and_a_silent_source(self):
         with tempfile.TemporaryDirectory() as d:
