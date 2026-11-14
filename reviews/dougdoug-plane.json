@@ -4,6 +4,12 @@
   "analysis_run": "43609853778",
   "purpose": "Integration preview of an already-published source, not a new upload",
   "visual_audio_review": "not_rendered_music_risk_screen_rejected_the_selected_story",
+  "screening_result": {
+    "diagnostic_run": "43611649341",
+    "reason": "music_risk",
+    "flagged_source_interval": [23.14, 31.3],
+    "next_action": "Do not rerun unchanged or truncate away the landing payoff. Investigate the audio classification with evidence, or select a different approved source."
+  },
   "clips": [
     {
       "start": 12.1,
