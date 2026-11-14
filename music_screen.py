@@ -54,7 +54,7 @@ class MusicScreen:
         self.shape = tuple(input_tensor["shape"])
         self.size = int(input_tensor["shape"][-1])
 
-    def flagged_span(self, samples, words, cues):
+    def flagged_span(self, samples, words, cues, *, diagnostics=None):
         import numpy as np
         # A window represents one hop of real audio. Never count padded audio as evidence.
         recent = deque(maxlen=17)  # 8.16 seconds.
@@ -62,6 +62,8 @@ class MusicScreen:
             t = pos / RATE
             window = samples[pos:pos + self.size]
             if np.mean(window[:HOP] ** 2) < .01 ** 2:
+                if diagnostics is not None:
+                    diagnostics.append(dict(start=t, end=t + HOP / RATE, decision="quiet"))
                 recent.clear()
                 continue
             frame = np.pad(window, (0, self.size - len(window))).reshape(self.shape)
@@ -74,10 +76,16 @@ class MusicScreen:
             end = t + HOP / RATE
             has_words = any(s < end and e > t for s, e, _ in words)
             has_cue = any(s < end and e > t for s, e in cues)
-            if speech >= .5 or (has_words and speech >= .2 and speech > singing and speech > music):
+            spoken = speech >= .5 or (has_words and speech >= .2 and speech > singing and speech > music)
+            likely_music = singing >= .25 or music >= .45 or (has_cue and music >= .25)
+            if diagnostics is not None:
+                diagnostics.append(dict(start=t, end=end, speech_score=float(speech),
+                                        singing_score=float(singing), music_score=float(music),
+                                        transcript_overlap=has_words, music_cue=has_cue,
+                                        decision="speech" if spoken else "music" if likely_music else "other"))
+            if spoken:
                 recent.clear()
                 continue
-            likely_music = singing >= .25 or music >= .45 or (has_cue and music >= .25)
             recent.append(bool(likely_music))
             if len(recent) == recent.maxlen and sum(recent) >= 14:
                 return (end - len(recent) * HOP / RATE, end)

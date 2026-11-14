@@ -165,17 +165,23 @@ def render_selection(source, packet, selection, out):
             media, info = download(source, Path(tmp), clip["start"], clip["end"], audio=False)
             validate_source(source, info)
             length = clip["end"]-clip["start"]
-            if seconds(media) < length-.2:
+            actual_duration = seconds(media)
+            if actual_duration < length-.2:
                 raise ValueError("Downloaded section is incomplete")
             words = [(s-clip["start"], e-clip["start"], w) for s,e,w in packet["words"]
                      if s >= clip["start"] and e <= clip["end"]]
             cues = [(max(s,clip["start"])-clip["start"], min(e,clip["end"])-clip["start"])
                     for s,e in packet.get("music_cues", []) if s < clip["end"] and e > clip["start"]]
-            flagged = screen.flagged_span(decode_audio(media, length), words, cues) if len(words) >= 4 else None
+            diagnostics = []
+            flagged = screen.flagged_span(decode_audio(media, length), words, cues,
+                                          diagnostics=diagnostics) if len(words) >= 4 else None
             if len(words) < 4 or flagged:
                 rejection = dict(source_id=packet["source_id"], clip=clip, spoken_words=len(words),
                                  reason="music_risk" if flagged else "insufficient_speech",
                                  flagged_source_interval=[round(t+clip["start"], 3) for t in flagged] if flagged else None,
+                                 downloaded_duration=actual_duration,
+                                 classifier_frames=[dict(row, start=round(row["start"]+clip["start"], 3),
+                                                         end=round(row["end"]+clip["start"], 3)) for row in diagnostics],
                                  status="rejected_before_render_not_a_copyright_determination")
                 (out / "rejected.json").write_text(json.dumps(rejection, indent=2))
                 raise ValueError(f"Selected story rejected: {rejection['reason']}; "

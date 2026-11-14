@@ -1,9 +1,33 @@
 import copy
 import unittest
+from importlib.util import find_spec
 from stream_review import packet_digest, review_packets, validate_selection, validate_source
 
 
 class StreamReviewTests(unittest.TestCase):
+    @unittest.skipUnless(find_spec("numpy"), "NumPy classifier trace test runs on the cloud worker")
+    def test_classifier_trace_preserves_rejection_and_speech_resets(self):
+        import numpy as np
+        from unittest.mock import Mock
+        from music_screen import MusicScreen, HOP
+        screen = MusicScreen.__new__(MusicScreen)
+        screen.spoken, screen.vocals, screen.music = [0], [1], 2
+        screen.input, screen.output, screen.size, screen.shape = 0, 1, HOP, (HOP,)
+        screen.model = Mock()
+        samples = np.ones(17 * HOP, dtype=np.float32)
+        for scores, rejected, decision in [([.01,.01,.95], True, "music"), ([.8,.01,.1], False, "speech")]:
+            screen.model.get_tensor.return_value = np.array(scores)
+            plain = screen.flagged_span(samples, [], [])
+            trace = []
+            traced = screen.flagged_span(samples, [], [], diagnostics=trace)
+            self.assertEqual(plain, traced)
+            self.assertEqual(bool(traced), rejected)
+            self.assertEqual(len(trace), 17)
+            self.assertTrue(all(row['decision'] == decision for row in trace))
+        trace = []
+        self.assertIsNone(screen.flagged_span(samples * 0, [], [], diagnostics=trace))
+        self.assertTrue(all(row['decision'] == 'quiet' for row in trace))
+
     def setUp(self):
         self.packet = dict(source_id="test", packet_sha256="abc", start=100, end=900)
         self.packet["packet_sha256"] = packet_digest(self.packet)
