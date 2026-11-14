@@ -72,10 +72,13 @@ class StreamReviewTests(unittest.TestCase):
 
     def test_timing_and_story_requirements(self):
         for change in [dict(start=99), dict(end=901), dict(end=150), dict(end=float('nan')),
-                       dict(start=True), dict(payoff=""), dict(hook="WOW")]:
+                       dict(start=True), dict(payoff=""), dict(hook="WOW"), dict(captions="false")]:
             bad = copy.deepcopy(self.selection)
             bad['clips'][0].update(change)
             with self.assertRaises(ValueError): validate_selection(bad, self.packet)
+        selected = copy.deepcopy(self.selection)
+        selected['clips'][0]['captions'] = False
+        self.assertEqual(len(validate_selection(selected, self.packet)), 1)
 
     def test_age_permission_is_not_blanket_channel_permission(self):
         source = dict(channel_id="123", credit="creator", permission_url="https://example.org/policy",

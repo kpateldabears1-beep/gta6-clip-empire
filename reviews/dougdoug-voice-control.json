@@ -1,0 +1,20 @@
+{
+  "source_id": "dougdoug-voice-control",
+  "packet_sha256": "8d880a5cecc70db122b918ae0b01876bc9deb3031d44dcf2203cbef77cbe7931",
+  "analysis_run": "43622804580",
+  "purpose": "Editorial preview only; check previous publication ledger before any release",
+  "visual_audio_review": "pending",
+  "clips": [
+    {
+      "start": 8.9,
+      "end": 35.9,
+      "title": "DougDoug argues with GTA voice controls",
+      "hook": "Will voice control listen?",
+      "captions": false,
+      "caption_reason": "Whisper repeatedly writes Broom and other inconsistent guesses for the voice commands; omit uncertain subtitles until the actual audio is reviewed.",
+      "setup": "The source title identifies repeated Vroom Vroom commands that yield no result. This section retains several attempts and the speaker's temporary-plan remark.",
+      "payoff": "The transcript shifts to Oh gosh, thank you near 32.12–34.24 seconds. Whether the vehicle actually moves still needs visual verification.",
+      "why_interesting": "Repeated attempts followed by an apparent change in reaction provide a possible complete comic sequence. Render for review without inventing a successful driving outcome or a predicted retention score."
+    }
+  ]
+}

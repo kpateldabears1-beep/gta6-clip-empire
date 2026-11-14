@@ -80,6 +80,8 @@ def validate_selection(selection, packet):
                 raise ValueError(f"Missing editorial judgment: {field}")
         if not 3 <= len(clip["hook"].split()) <= 5:
             raise ValueError("Use a specific, truthful 3–5 word hook")
+        if "captions" in clip and not isinstance(clip["captions"], bool):
+            raise ValueError("captions must be a boolean")
     return clips
 
 
@@ -196,7 +198,8 @@ def render_selection(source, packet, selection, out):
                 raise ValueError(f"Selected story rejected: {rejection['reason']}; "
                                  f"source interval {rejection['flagged_source_interval']}. See rejected.json.")
             final = out / f"preview-{i}.mp4"
-            render_vertical_short(media, final, length, words, clip["title"], source["credit"],
+            caption_words = words if clip.get("captions", True) else []
+            render_vertical_short(media, final, length, caption_words, clip["title"], source["credit"],
                                   hook=clip["hook"], platform=source["platform"])
             subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(final), "-f", "null", "-"], check=True)
             results.append(dict(clip, file=final.name, sha256=hashlib.sha256(final.read_bytes()).hexdigest(),
