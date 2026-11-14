@@ -1,0 +1,96 @@
+name: Audio-first stream review
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Analyze audio or render a reviewed selection
+        type: choice
+        options: [analyze, render]
+        default: analyze
+      analysis_run:
+        description: For render, the successful analysis run containing story-review
+        type: string
+      source_id:
+        description: Reviewed source key in review_sources.json
+        default: dougdoug-plane
+        required: true
+        type: string
+      start_seconds:
+        description: Start within the recording
+        default: '0'
+        type: string
+      minutes:
+        description: Audio minutes to analyze (1–60)
+        default: '12'
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: stream-review
+  cancel-in-progress: false
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install audio tools
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          python -m pip install -r requirements.txt
+      - name: Verify story and timestamp checks
+        run: python -m unittest discover -s tests -p test_stream_review.py -v
+      - name: Transcribe a bounded approved source
+        if: inputs.mode == 'analyze'
+        env:
+          SOURCE_ID: ${{ inputs.source_id }}
+          START_SECONDS: ${{ inputs.start_seconds }}
+          MINUTES: ${{ inputs.minutes }}
+          HF_HOME: ${{ runner.temp }}/stream-review-model
+        run: python -u stream_review.py analyze "$SOURCE_ID" "$RUNNER_TEMP/review" --start "$START_SECONDS" --minutes "$MINUTES"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'analyze'
+        with:
+          name: story-review
+          path: ${{ runner.temp }}/review/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/download-artifact@v4
+        if: inputs.mode == 'render'
+        with:
+          name: story-review
+          path: ${{ runner.temp }}/packet
+          run-id: ${{ inputs.analysis_run }}
+          github-token: ${{ github.token }}
+      - name: Render only reviewed moments
+        if: inputs.mode == 'render'
+        env:
+          SOURCE_ID: ${{ inputs.source_id }}
+          HF_HOME: ${{ runner.temp }}/stream-review-model
+        run: |
+          if [[ ! "$SOURCE_ID" =~ ^[a-z0-9-]+$ ]]; then exit 1; fi
+          python -u stream_review.py render "$SOURCE_ID" "$RUNNER_TEMP/previews" --packet "$RUNNER_TEMP/packet/review.json" --selection "reviews/$SOURCE_ID.json"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'render'
+        with:
+          name: reviewed-previews
+          path: ${{ runner.temp }}/previews/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Report review status
+        run: |
+          echo 'Draft review complete. Analysis provides timed transcripts; render provides selected previews. Visual/audio review remains required before any release. Nothing was published.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary audio and models
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/stream-review-model" "$RUNNER_TEMP/review" "$RUNNER_TEMP/packet" "$RUNNER_TEMP/previews"
