@@ -9,6 +9,20 @@ from render import analyze_audio, join, probe, render, seconds
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs FFmpeg with libass")
 class MediaTests(unittest.TestCase):
+    def test_render_from_separate_input_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            incoming, outgoing = root / "input footage", root / "previews"
+            incoming.mkdir()
+            outgoing.mkdir()
+            source, out = incoming / "source.mp4", outgoing / "preview.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=blue:s=160x90:r=5",
+                            "-t", "2", "-c:v", "libx264", str(source)], check=True)
+            render(source, out, 2, [], "Watch this moment", "Test footage")
+            self.assertTrue(1.9 < seconds(out) < 2.2)
+            self.assertTrue(any(s['codec_name'] == 'aac' for s in probe(out)['streams']))
+            subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(out), "-f", "null", "-"], check=True)
+
     def test_encoder_caps_overlong_single_segment(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

@@ -153,7 +153,7 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
               "scale=1080:770:force_original_aspect_ratio=increase,crop=1080:770,setsar=1[cam];"
               f"[game][cam]vstack=inputs=2,ass={ass.name}[v]")
     cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-filter_complex_threads", "2",
-           "-ss", str(start), "-i", source.name]
+           "-ss", str(start), "-i", str(source.resolve())]
     if not audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
     cmd += ["-filter_complex", vf, "-map", "[v]", "-map", "0:a:0" if audio else "1:a:0",

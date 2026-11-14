@@ -50,6 +50,8 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Verify story and timestamp checks
         run: python -m unittest discover -s tests -p test_stream_review.py -v
+      - name: Verify separate source and output folders
+        run: python -m unittest discover -s tests -p test_media.py -k test_render_from_separate_input_directory -v
       - name: Transcribe a bounded approved source
         if: inputs.mode == 'analyze'
         env:
