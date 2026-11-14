@@ -3,23 +3,23 @@
   "packet_sha256": "8d880a5cecc70db122b918ae0b01876bc9deb3031d44dcf2203cbef77cbe7931",
   "analysis_run": "43622804580",
   "purpose": "Editorial preview only; check previous publication ledger before any release",
-  "visual_audio_review": "sampled_frames_reviewed_layout_revision_pending_full_motion_and_listening_review",
+  "visual_audio_review": "revised_layout_verified_in_six_sampled_frames_full_motion_and_listening_still_pending",
   "qa_observation": {
-    "run_id": "43628288107",
+    "run_id": "43641165888",
     "prior_youtube_upload_in_ledger": "B2qXMQktQ0s",
     "integrated_loudness_lufs": -15.95,
     "true_peak_dbtp": -2.03,
     "loudness_range_lu": 5.6,
-    "visual_finding": "Six sampled frames confirm GTA gameplay and streamer reactions, but the landscape stream occupies only a narrow central band with large black/blurred areas. Use the visually located face region for a source-specific split layout; do not reuse these coordinates on other streams.",
+    "visual_finding": "The revised six-frame contact sheet confirms large gameplay above a readable facecam, without the former black/blurred filler bands. The car and the streamer's expressions remain visible at all sampled times. The original stream's embedded rule banner is partly cropped. These facecam coordinates are specific to this source, not a universal streamer layout.",
     "audio_limit": "Measured levels are healthy; intelligibility and subjective sound quality have not been verified by listening."
   },
   "technical_preview": {
-    "run_id": "43623342326",
-    "artifact_id": "14124797522",
-    "artifact_expires_at": "2026-11-21T17:52:40Z",
+    "run_id": "43628566081",
+    "artifact_id": "14127172088",
+    "artifact_expires_at": "2026-11-21T18:48:49Z",
     "status": "rendered_music_screen_and_decode_checks_passed",
     "publication": "none",
-    "next_action": "Review actual visuals/audio from the cloud preview and check the prior-publication ledger. Do not rerender unchanged or publish under the expired November 13 backup exception."
+    "next_action": "Already recorded as uploaded in Redis: B2qXMQktQ0s. Keep this as a layout test, not a new upload. Do not rerender unchanged. Full listening/motion review is not complete, and the November 13 backup exception is expired."
   },
   "clips": [
     {
