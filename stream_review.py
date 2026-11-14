@@ -60,8 +60,11 @@ def validate_selection(selection, packet):
     if selection.get("packet_sha256") != packet["packet_sha256"]:
         raise ValueError("Selection was not reviewed against this transcript")
     clips = selection.get("clips")
-    if not isinstance(clips, list) or not 1 <= len(clips) <= 5:
-        raise ValueError("Select one to five stories, not a daily quota of filler")
+    if not isinstance(clips, list) or len(clips) > 5:
+        raise ValueError("Select at most five stories, not a daily quota of filler")
+    if not clips and (selection.get("decision") != "reject" or
+                      not isinstance(selection.get("reason"), str) or not selection["reason"].strip()):
+        raise ValueError("An empty selection needs an explicit editorial rejection reason")
     previous = []
     for clip in clips:
         start, end = clip.get("start"), clip.get("end")
@@ -157,8 +160,14 @@ def render_selection(source, packet, selection, out):
     clips = validate_selection(selection, packet)
     if packet["source"] != source:
         raise ValueError("Source permission changed; analyze again")
-    screen = MusicScreen()
     out.mkdir(parents=True, exist_ok=True)
+    if not clips:
+        (out / "rejected.json").write_text(json.dumps(dict(
+            source_id=packet["source_id"], status="editorial_rejected",
+            reason=selection["reason"], packet_sha256=packet["packet_sha256"]), indent=2))
+        print("SKIP: editor rejected this source; no media downloaded, rendered or published.")
+        return
+    screen = MusicScreen()
     results = []
     for i, clip in enumerate(clips, 1):
         with TemporaryDirectory(prefix="gta-review-render-") as tmp:

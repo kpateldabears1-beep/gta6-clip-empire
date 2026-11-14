@@ -1,0 +1,8 @@
+{
+  "source_id": "dougdoug-counting",
+  "packet_sha256": "fb34ce025f5a54c47f57f73a8b0c4ee1a695a0cfb0f7be8e3af75a376d3fff9b",
+  "analysis_run": "43617660796",
+  "decision": "reject",
+  "reason": "The transcript delivers the counting-to-five payoff by 6.36 seconds. Only isolated words occur until 36.22 seconds. There is insufficient transcript evidence for a compelling 18–43.9-second continuous story; filling that length would rely on unreviewed visuals or dead time. Reject for now instead of padding to meet the quota. This is an editorial assessment from transcript evidence, not a music or copyright finding.",
+  "clips": []
+}

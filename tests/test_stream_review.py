@@ -53,6 +53,23 @@ class StreamReviewTests(unittest.TestCase):
         bad['clips'].append(dict(bad['clips'][0], start=120, end=150))
         with self.assertRaises(ValueError): validate_selection(bad, self.packet)
 
+    def test_editor_can_reject_without_downloading_or_loading_models(self):
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from stream_review import render_selection
+        packet = dict(self.packet, source={"credit": "test"})
+        packet["packet_sha256"] = packet_digest(packet)
+        selection = dict(self.selection, packet_sha256=packet["packet_sha256"], clips=[])
+        with self.assertRaises(ValueError): validate_selection(selection, packet)
+        selection.update(decision="reject", reason="Only six seconds of story; the rest is filler")
+        with TemporaryDirectory() as tmp, patch("stream_review.download") as download, patch("music_screen.MusicScreen") as model:
+            render_selection(packet["source"], packet, selection, Path(tmp))
+            download.assert_not_called()
+            model.assert_not_called()
+            self.assertEqual(json.loads((Path(tmp)/"rejected.json").read_text())["status"], "editorial_rejected")
+
     def test_timing_and_story_requirements(self):
         for change in [dict(start=99), dict(end=901), dict(end=150), dict(end=float('nan')),
                        dict(start=True), dict(payoff=""), dict(hook="WOW")]:
