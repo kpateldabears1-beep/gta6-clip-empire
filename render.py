@@ -132,14 +132,13 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
     audio = any(s["codec_type"] == "audio" for s in probe(source)["streams"])
     subtitles(ass, words, length, curiosity_hook(title, hook), credit, notes, platform=platform,
               campaign=campaign, gap=gap if gap is not None else ("[Gameplay footage]" if audio else "[Silent footage]"))
-    # Brief center punch-in on each cut, then settle back to uncropped gameplay.
+    # Preserve the whole scene when no facecam crop was reviewed. Overlay the
+    # fitted picture directly: an opaque padded foreground creates black bands
+    # over the blurred backdrop and makes the useful gameplay look smaller.
     vf = ("[0:v]fps=30,setsar=1,split[back][front];"
           "[back]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,"
           "boxblur=12:2,scale=1080:1920,eq=brightness=-0.12[bg];"
-          "[front]scale=1080:960:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-          "pad=1080:960:(ow-iw)/2:(oh-ih)/2:color=black,"
-          "zoompan=z='1+0.10*max(0,1-on/12)':x='iw/2-iw/zoom/2':"
-          "y='ih/2-ih/zoom/2':d=1:s=1080x960:fps=30[fg];"
+          "[front]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[fg];"
           f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,ass={ass.name}[v]")
     if facecam is not None:
         x, y, w, h = map(float, facecam)  # normalized left, top, width, height

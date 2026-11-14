@@ -21,6 +21,13 @@ class MediaTests(unittest.TestCase):
             render(source, out, 2, [], "Watch this moment", "Test footage")
             self.assertTrue(1.9 < seconds(out) < 2.2)
             self.assertTrue(any(s['codec_name'] == 'aac' for s in probe(out)['streams']))
+            # Above the landscape picture, the blue blurred backdrop must remain
+            # visible rather than being covered by opaque foreground padding.
+            rgb = subprocess.check_output([
+                "ffmpeg", "-v", "error", "-ss", "1", "-i", str(out), "-vf",
+                "crop=2:2:100:500,scale=1:1,format=rgb24", "-frames:v", "1",
+                "-f", "rawvideo", "-"])
+            self.assertGreater(rgb[2], 120, rgb)
             subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(out), "-f", "null", "-"], check=True)
 
     def test_encoder_caps_overlong_single_segment(self):
