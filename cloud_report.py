@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 from urllib.request import urlopen
+from urllib.error import HTTPError
 from xml.etree import ElementTree
 
 from kick import fetch_kick_clips
@@ -30,8 +31,16 @@ def feed_counts(feed, channel):
 def view_report(db, channel, now):
     if not re.fullmatch(r"UC[A-Za-z0-9_-]{22}", channel):
         raise ValueError("Set YOUTUBE_CHANNEL_ID to the destination channel ID")
-    with urlopen("https://www.youtube.com/feeds/videos.xml?channel_id=" + channel, timeout=25) as feed:
-        counts = feed_counts(feed, channel)
+    try:
+        with urlopen("https://www.youtube.com/feeds/videos.xml?channel_id=" + channel, timeout=25) as feed:
+            counts = feed_counts(feed, channel)
+    except HTTPError as exc:
+        if exc.code != 404:
+            raise
+        print("::warning::YouTube public feed unavailable (404); prior view snapshots preserved.")
+        return ["### YouTube performance unavailable",
+                "YouTube returned HTTP 404 for the public channel feed. No view counts were recorded.",
+                "Prior snapshots are unchanged. Check channel visibility and YouTube Studio; this does not establish zero views or channel removal."]
     base = "gta-clips:performance:" + channel
     previous = json.loads(db.get(base + ":latest") or "{}")
     snapshot = json.dumps({"at": now.isoformat(), "views": counts})

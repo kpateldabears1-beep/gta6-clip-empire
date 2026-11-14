@@ -3,11 +3,19 @@ import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 import cloud_report
 
 
 class CloudReportTests(unittest.TestCase):
+    def test_unavailable_feed_does_not_erase_prior_view_counts(self):
+        db = MagicMock()
+        with patch.object(cloud_report, "urlopen", side_effect=HTTPError("url",404,"missing",{},None)):
+            lines = cloud_report.view_report(db, "UC"+"a"*22, datetime.now(timezone.utc))
+        self.assertIn("unavailable", lines[0])
+        db.pipeline.assert_not_called()
+
     def test_view_changes_ignore_expired_entries_and_baseline_new_uploads(self):
         channel = "UC" + "a"*22
         feed = ('<feed><channelId>' + channel[2:] + '</channelId>' +
