@@ -1,6 +1,6 @@
 # Lysium draft — Prayer Before The Getaway
 
-Prepared November 15, 2026. **Not submitted, brand-approved or publicly posted.**
+Prepared November 15, 2026. **Submission authorized; file attachment pending. Not submitted, brand-approved or publicly posted.**
 
 ## Exact video
 
@@ -46,4 +46,4 @@ Please review this exact draft and proposed caption before publication. Happy to
 3. Record the brand's approval reference. Publish these exact bytes with the approved caption, under the existing publishing authorization, daily cap and dedupe rules. Do not use generic `deliver`, which discovers fresh candidates.
 4. Submit the resulting live YouTube URL to the campaign. No earnings are promised.
 
-The agent has kept all media processing/storage on cloud runners and R2. No video was downloaded to the user's computer. R2 setup and durable backup are complete; creator approval and the final editorial review remain separate.
+R2 setup and durable backup are complete. The user subsequently authorized one temporary local copy solely to submit this exact draft, then removal. Its SHA-256 was verified. The browser file chooser is blocked; the user has been asked to attach Downloads/preview.mp4 in the prepared form. No draft has been submitted yet. All rendering remains on cloud runners; this exception does not authorize further local media work. Creator approval and the final editorial review remain separate.
