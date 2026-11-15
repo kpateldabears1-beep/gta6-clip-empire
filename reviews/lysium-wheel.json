@@ -1,0 +1,16 @@
+{
+  "source_id": "lysium-wheel",
+  "packet_sha256": "ae3d612682db6fa6a944416efa8d6796d4256c965bc63dbbc1cf42ac31c65732",
+  "clips": [
+    {
+      "start": 0.3,
+      "end": 42.2,
+      "title": "Letting God take the wheel | GTA RP",
+      "hook": "Letting God Drive",
+      "setup": "The speaker explicitly says God is about to take the wheel while beside a sports car and police, as shown in the inspected source frame.",
+      "payoff": "The transcript later changes to repeated no and a completed apology at 41.65s. End after that apology, before the repeated follow-up. The exact action causing it requires visual review; no crash is asserted.",
+      "why_interesting": "A clear stated premise followed by a reversal may be understandable without previous RP lore. This is a provisional inspection selection, not approval: the long buildup, unclear ASR and possible sung/prayer passages require audio/music screening and editorial review. Do not publish if the actual action or pacing fails to support the premise.",
+      "captions": false
+    }
+  ]
+}
