@@ -124,10 +124,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
 
 def render_vertical_short(source, out, length, words, title, credit, notes=(), facecam=None, start=0, hook=None,
-                          platform=None, campaign=None, gap=None):
+                          platform=None, campaign=None, gap=None, gameplay_crop=None, audio_profile=None):
     if not isfinite(length) or length <= 0:
         raise ValueError("Invalid segment duration")
     length = min(length, MAX_SEGMENT_SECONDS)
+    if audio_profile not in (None, "dialogue"):
+        raise ValueError("Unknown audio profile")
+    crop_filter = ""
+    if gameplay_crop is not None:
+        if facecam is not None or len(gameplay_crop) != 4:
+            raise ValueError("Choose a gameplay crop or a facecam layout")
+        x, y, w, h = map(float, gameplay_crop)
+        if not (all(isfinite(v) for v in (x, y, w, h)) and min(x, y) >= 0
+                and min(w, h) > 0 and x+w <= 1 and y+h <= 1):
+            raise ValueError("Invalid reviewed gameplay crop")
+        crop_filter = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
     ass = out.with_suffix(".ass")
     audio = any(s["codec_type"] == "audio" for s in probe(source)["streams"])
     subtitles(ass, words, length, curiosity_hook(title, hook), credit, notes, platform=platform,
@@ -138,7 +149,7 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
     vf = ("[0:v]fps=30,setsar=1,split[back][front];"
           "[back]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,"
           "boxblur=12:2,scale=1080:1920,eq=brightness=-0.12[bg];"
-          "[front]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[fg];"
+          f"[front]{crop_filter}scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[fg];"
           f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,ass={ass.name}[v]")
     if facecam is not None:
         x, y, w, h = map(float, facecam)  # normalized left, top, width, height
@@ -155,8 +166,9 @@ def render_vertical_short(source, out, length, words, title, credit, notes=(), f
            "-ss", str(start), "-i", str(source.resolve())]
     if not audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+    leveling = "acompressor=threshold=0.125:ratio=3:attack=10:release=150:makeup=1.5," if audio_profile == "dialogue" else ""
     cmd += ["-filter_complex", vf, "-map", "[v]", "-map", "0:a:0" if audio else "1:a:0",
-            "-af", "loudnorm=I=-16:TP=-2:LRA=9,apad", "-t", f"{length:.3f}", "-c:v", "libx264", "-threads", "2",
+            "-af", leveling + "loudnorm=I=-16:TP=-2:LRA=9,apad", "-t", f"{length:.3f}", "-c:v", "libx264", "-threads", "2",
             "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac",
             "-b:a", "128k", "-ar", "44100", "-ac", "2", "-movflags", "+faststart", out.name]
     run(cmd, out.parent)

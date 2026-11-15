@@ -9,6 +9,24 @@ from render import analyze_audio, join, probe, render, seconds
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs FFmpeg with libass")
 class MediaTests(unittest.TestCase):
+    def test_render_from_reviewed_gameplay_crop(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source, out = root / "source.mp4", root / "preview.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                            "color=blue:s=320x180:r=5,drawbox=x=80:y=0:w=160:h=180:color=red:t=fill",
+                            "-t", "2", "-c:v", "libx264", str(source)], check=True)
+            render(source, out, 2, [], "Watch this moment", "Test footage",
+                   gameplay_crop=[.25, 0, .5, 1], audio_profile="dialogue")
+            rgb = subprocess.check_output([
+                "ffmpeg", "-v", "error", "-ss", "1", "-i", str(out), "-vf",
+                "crop=2:2:540:500,scale=1:1,format=rgb24", "-frames:v", "1",
+                "-f", "rawvideo", "-"])
+            self.assertGreater(rgb[0], 180, rgb)
+            self.assertLess(rgb[2], 60, rgb)
+            self.assertTrue(any(s['codec_name'] == 'aac' for s in probe(out)['streams']))
+            self.assertTrue(1.9 < seconds(out) < 2.2)
+
     def test_render_from_separate_input_directory(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

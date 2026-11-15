@@ -200,7 +200,8 @@ def render_selection(source, packet, selection, out):
             final = out / f"preview-{i}.mp4"
             caption_words = words if clip.get("captions", True) else []
             render_vertical_short(media, final, length, caption_words, clip["title"], source["credit"],
-                                  hook=clip["hook"], platform=source["platform"], facecam=clip.get("facecam"))
+                                  hook=clip["hook"], platform=source["platform"], facecam=clip.get("facecam"),
+                                  gameplay_crop=clip.get("gameplay_crop"), audio_profile=clip.get("audio_profile"))
             subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", str(final), "-f", "null", "-"], check=True)
             results.append(dict(clip, file=final.name, sha256=hashlib.sha256(final.read_bytes()).hexdigest(),
                                 status="technical_checks_passed_visual_review_required"))
