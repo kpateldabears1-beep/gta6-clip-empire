@@ -1,0 +1,66 @@
+name: Back up exact reviewed preview
+on:
+  workflow_dispatch:
+    inputs:
+      render_run:
+        description: Successful stream-review render run
+        required: true
+        type: string
+      source_id:
+        description: Reviewed source key
+        required: true
+        type: string
+      sha256:
+        description: Exact MP4 hash from completed visual QA
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: archive-reviewed-preview
+  cancel-in-progress: false
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify source run and inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RENDER_RUN: ${{ inputs.render_run }}
+          SOURCE_ID: ${{ inputs.source_id }}
+          EXPECTED_SHA: ${{ inputs.sha256 }}
+        run: |
+          [[ "$RENDER_RUN" =~ ^[0-9]+$ ]]
+          [[ "$SOURCE_ID" =~ ^[a-z0-9-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RENDER_RUN" | jq -e '.conclusion == "success" and .path == ".github/workflows/stream-review.yml"'
+          python -m unittest discover -s tests -p test_preview_qa.py -v
+      - uses: actions/download-artifact@v4
+        with:
+          name: reviewed-previews
+          path: ${{ runner.temp }}/archive-review
+          run-id: ${{ inputs.render_run }}
+          github-token: ${{ github.token }}
+      - name: Archive and verify the exact draft
+        env:
+          RENDER_RUN: ${{ inputs.render_run }}
+          SOURCE_ID: ${{ inputs.source_id }}
+          EXPECTED_SHA: ${{ inputs.sha256 }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python -m pip install 'boto3>=1.36,<2' 'requests>=2.32,<3'
+          python scripts/archive_review.py "$RUNNER_TEMP/archive-review" "reviews/$SOURCE_ID.json" "$EXPECTED_SHA"
+      - name: Clean runner media
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/archive-review"
