@@ -2,6 +2,8 @@
 
 The worker selects fast-growing GTA clips, uploads a public YouTube Short, and sends a compilation to the TikTok inbox when the source material and account allow it. Preview mode renders the same edits. Media and Whisper run in a temporary directory on the Ubuntu runner.
 
+**Current operating scope: YouTube only.** See [the verified setup checklist](reviews/SETUP_STATUS.md) for connected services and release blockers. Enabled schedule switches do not mean a clip was posted. `deliver` selects current candidates; it does not release an earlier reviewed preview.
+
 ## Configure the repository
 
 Put the source and the hidden `.github/workflows/pipeline.yml` on the default branch. The workflow supports a public or private repository. Standard public-repository runners have free compute. Anyone with repository read access can download retained workflow artifacts, including preview videos and their credits. Check your storage, Redis, and account limits before enabling the schedule. [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
@@ -74,7 +76,7 @@ Fair use is determined case by case. Attribution, captions and a duration cap ca
 
 ## Recovery and tests
 
-Delivery atomically reserves selected source IDs in `gta-clips:v1` and one UTC-day slot per platform upload in `gta-clips:daily:YYYY-MM-DD`. A YouTube Short plus a TikTok inbox upload costs two slots. With one slot left the worker sends the Short. A GitHub artifact costs zero slots, and the one-off YouTube sample shares the same cap. External publishers manage their own limits. A timeout may follow a successful upload, so an uncertain attempt consumes its slot. The ledger records each destination separately. Check Studio, the TikTok inbox and the one-day artifact before retrying an uncertain transfer. Use the artifact to finish a partially delivered batch. The runner removes its media and model at job exit.
+Delivery atomically reserves selected source IDs in `gta-clips:v1` and one America/Chicago calendar-day slot per platform upload in `gta-clips:daily:YYYY-MM-DD`. A YouTube Short plus a TikTok inbox upload costs two slots. With one slot left the worker sends the Short. A GitHub artifact costs zero slots, and the one-off YouTube sample shares the same cap. External publishers manage their own limits. A timeout may follow a successful upload, so an uncertain attempt consumes its slot. The ledger records each destination separately. Check Studio, the TikTok inbox and the one-day artifact before retrying an uncertain transfer. Use the artifact to finish a partially delivered batch. The runner removes its media and model at job exit.
 
 Run `python3 -m unittest discover -s tests -v` with FFmpeg and ffprobe on the test machine. The synthetic render exercises the camera layout, silence handling, audio normalization to a common sample rate, concatenation and decoding. Live verification requires the accounts and credentials above.
 
