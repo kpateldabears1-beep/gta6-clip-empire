@@ -11,7 +11,7 @@ from render import subtitles
 
 
 class CaptionTests(unittest.TestCase):
-    def test_brief_branding_and_sparse_captions_keep_the_moment_visible(self):
+    def test_permanent_credit_and_sparse_captions_keep_the_moment_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
             ass = Path(tmp) / "cut.ass"
             for platform in ("Kick", "Twitch"):
@@ -19,7 +19,7 @@ class CaptionTests(unittest.TestCase):
                           "@Example", platform=platform, campaign="Creator event")
                 data = ass.read_text()
                 self.assertEqual([line for line in data.splitlines() if ",Credit,," in line],
-                                 ["Dialogue: 0,0:00:00.00,0:00:02.50,Credit,,0,0,0,,Clip: @Example Creator event"])
+                                 ["Dialogue: 0,0:00:00.00,0:00:06.00,Credit,,0,0,0,,Clip: @Example Creator event"])
                 self.assertIn("0:00:00.00,0:00:01.80,Hook,", data)
                 rows = [line.split(",", 9) for line in data.splitlines() if ",Caption,," in line]
                 self.assertEqual(rows[0][1], "0:00:01.00")

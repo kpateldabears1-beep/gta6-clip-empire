@@ -52,6 +52,10 @@ jobs:
         run: python -m unittest discover -s tests -p test_stream_review.py -v
       - name: Verify separate source and output folders
         run: python -m unittest discover -s tests -p test_media.py -k test_render_from_ -v
+      - name: Verify permanent creator credit
+        run: |
+          python -m unittest discover -s tests -p test_music.py -k CaptionTests -v
+          python -m unittest discover -s tests -p test_media.py -k test_encoder_caps_overlong_single_segment -v
       - name: Transcribe a bounded approved source
         if: inputs.mode == 'analyze'
         env:

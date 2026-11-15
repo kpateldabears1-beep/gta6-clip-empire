@@ -101,7 +101,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         credit = "Credit: " + name
     if campaign:
         credit = (credit + " " + safe(campaign)).rstrip()
-    add(0, min(length, 2.5), "Credit", credit)
+    # Attribution must survive after the brief hook disappears.
+    add(0, length, "Credit", credit)
     for note in notes:
         add(max(0, float(note["start"])), min(length, float(note["end"])), "Credit",
             r"{\an5\pos(540,1470)}" + safe(note["text"])[:150])
