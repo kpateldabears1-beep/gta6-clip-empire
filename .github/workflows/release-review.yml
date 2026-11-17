@@ -1,0 +1,54 @@
+name: Release exact approved Lysium draft
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Verify backed-up bytes or publish after recorded brand approval
+        type: choice
+        options: [verify, publish]
+        default: verify
+permissions:
+  contents: read
+concurrency:
+  group: gta-clips-delivery
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify release guards
+        run: python -m unittest discover -s tests -p test_review_release.py -v
+      - name: Install cloud and delivery clients
+        run: python -m pip install 'boto3>=1.36,<2' 'redis>=5,<8' 'google-api-python-client>=2.150,<3' 'google-auth-httplib2>=0.2,<1'
+      - name: Verify exact cloud draft without publishing
+        if: inputs.mode == 'verify'
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          YOUTUBE_CHANNEL_ID: ${{ vars.YOUTUBE_CHANNEL_ID }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python scripts/release_review.py
+      - name: Release only the exact approved bytes and caption
+        if: inputs.mode == 'publish'
+        env:
+          DAILY_POST_CAP: ${{ vars.DAILY_POST_CAP || '5' }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          YOUTUBE_CHANNEL_ID: ${{ vars.YOUTUBE_CHANNEL_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python scripts/release_review.py --publish

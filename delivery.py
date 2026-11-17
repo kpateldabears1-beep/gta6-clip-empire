@@ -26,15 +26,17 @@ def social_caption(clip, game, dest):
     return f'{clip["title"]}\nClip: {credit}\n' + " ".join("#"+tag for tag in social_tags(clip, game, dest))
 
 
-def youtube(path, clip, game, *, with_receipt=False):
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
-    creds = Credentials(None, refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
-                        token_uri="https://oauth2.googleapis.com/token",
-                        client_id=os.environ["YOUTUBE_CLIENT_ID"],
-                        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"])
-    client = build("youtube", "v3", credentials=creds, cache_discovery=False)
+def youtube_metadata(clip, game, approved_metadata=None):
+    if approved_metadata is not None:
+        title, description, tags = (approved_metadata[k] for k in ("title", "description", "tags"))
+        if (not isinstance(title, str) or not title.strip() or len(title) > 100
+                or not isinstance(description, str) or len(description.encode()) > 5000
+                or any(c in title + description for c in "<>")
+                or not isinstance(tags, list) or not all(isinstance(t, str) and t for t in tags)):
+            raise ValueError("Invalid approved YouTube metadata")
+        return {"snippet": {"title": title, "description": description,
+                            "tags": tags, "categoryId": "20"},
+                "status": {"privacyStatus": "public"}}
     tags = social_tags(clip, game, "youtube")
     title = (clip["title"] or game).replace("<", "").replace(">", "").strip()[:80] or game
     body = {"snippet": {"title": title + " #Shorts", "categoryId": "20", "tags": tags,
@@ -45,6 +47,19 @@ def youtube(path, clip, game, *, with_receipt=False):
         body["snippet"]["description"] = clip["description_intro"] + "\n\n" + body["snippet"]["description"]
     if clip.get("music_credit"):
         body["snippet"]["description"] += "\nMusic: " + clip["music_credit"]
+    return body
+
+
+def youtube(path, clip, game, *, with_receipt=False, approved_metadata=None):
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    body = youtube_metadata(clip, game, approved_metadata)
+    creds = Credentials(None, refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
+                        token_uri="https://oauth2.googleapis.com/token",
+                        client_id=os.environ["YOUTUBE_CLIENT_ID"],
+                        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"])
+    client = build("youtube", "v3", credentials=creds, cache_discovery=False)
     request = client.videos().insert(
         part="snippet,status", body=body, notifySubscribers=False,
         media_body=MediaFileUpload(str(path), mimetype="video/mp4", chunksize=8*1024**2, resumable=True))
@@ -55,7 +70,7 @@ def youtube(path, clip, game, *, with_receipt=False):
     print("YouTube destination channel:", result.get("snippet", {}).get("channelId", "unknown"))
     if with_receipt:
         return {"id": result["id"], "status": result.get("status", {}),
-                "snippet": {k: result["snippet"][k] for k in ("channelId", "publishedAt")}}
+                "snippet": {k: result.get("snippet", {}).get(k) for k in ("channelId", "publishedAt")}}
     return result["id"]
 
 
