@@ -1,5 +1,7 @@
 # Verified setup — November 15, 2026
 
+**November 16 update:** the exact-draft release path is now implemented and cloud-verified in [run 44020823720](https://github.com/kpateldabears1-beep/gta6-clip-empire/actions/runs/44020823720). It retrieved the private R2 video, verified full SHA-256 and found no existing source reservation. Its publishing step was skipped. The release plan remains `not_submitted`; actual playback review and brand approval are still required. The previous temporary `Downloads/preview.mp4` is no longer present; the agent did not download a replacement. The finished MP4 is still in the [render artifact](https://github.com/kpateldabears1-beep/gta6-clip-empire/actions/runs/43758501170/artifacts/14178438950) and durable R2 backup.
+
 **Current scope: YouTube only**, explicitly selected by the user. TikTok, Instagram and Rumble setup/publication are deferred. Do not interact with the user's Chrome browser. No new video was submitted or published during this audit.
 
 ## Ramp-up checklist
